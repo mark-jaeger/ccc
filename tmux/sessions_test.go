@@ -199,3 +199,76 @@ func TestParseClientList(t *testing.T) {
 		t.Errorf("expected Height 56, got %d", clients[0].Height)
 	}
 }
+
+func TestParseClientListEmpty(t *testing.T) {
+	clients := ParseClientList("")
+	if clients != nil {
+		t.Errorf("expected nil for empty output, got %v", clients)
+	}
+}
+
+func TestParseClientListMultiple(t *testing.T) {
+	output := "/dev/ttys004: 220x56 0\n/dev/ttys005: 120x30 0\n"
+
+	clients := ParseClientList(output)
+	if len(clients) != 2 {
+		t.Fatalf("expected 2 clients, got %d", len(clients))
+	}
+	if clients[0].Width != 220 || clients[0].Height != 56 {
+		t.Errorf("client[0] = %dx%d, want 220x56", clients[0].Width, clients[0].Height)
+	}
+	if clients[1].Width != 120 || clients[1].Height != 30 {
+		t.Errorf("client[1] = %dx%d, want 120x30", clients[1].Width, clients[1].Height)
+	}
+}
+
+func TestParseClientListMalformed(t *testing.T) {
+	output := "no-colon-line\n/dev/ttys004: 220x56 0\nbadline\n"
+
+	clients := ParseClientList(output)
+	if len(clients) != 1 {
+		t.Fatalf("expected 1 valid client (malformed lines skipped), got %d", len(clients))
+	}
+	if clients[0].TTY != "/dev/ttys004" {
+		t.Errorf("expected TTY /dev/ttys004, got %q", clients[0].TTY)
+	}
+}
+
+func TestNextAutoNameWithGap(t *testing.T) {
+	existing := []Session{
+		{Name: "rt1", Project: "rt1"},
+		{Name: "rt1-5", Project: "rt1"},
+	}
+
+	name := NextAutoName("rt1", existing)
+	if name != "rt1-6" {
+		t.Errorf("expected rt1-6 (maxNum=5 → next=6), got %q", name)
+	}
+}
+
+func TestNextAutoNameNonNumericSuffix(t *testing.T) {
+	existing := []Session{
+		{Name: "rt1", Project: "rt1"},
+		{Name: "rt1-beta", Project: "rt1"},
+	}
+
+	// "rt1-beta" has non-numeric suffix → ignored by NextAutoName
+	name := NextAutoName("rt1", existing)
+	if name != "rt1-2" {
+		t.Errorf("expected rt1-2 (non-numeric suffix ignored), got %q", name)
+	}
+}
+
+func TestFilterSessionsExactNameUntagged(t *testing.T) {
+	sessions := []Session{
+		{Name: "myapp", Project: "", Path: "/tmp", Windows: 1},
+	}
+
+	filtered := FilterSessionsForProject(sessions, "myapp")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(filtered))
+	}
+	if filtered[0].Verified {
+		t.Error("untagged session matched by name should have Verified=false")
+	}
+}

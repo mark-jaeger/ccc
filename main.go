@@ -1,3 +1,4 @@
+// ccc is a CLI tool for managing tmux sessions on local and remote machines.
 package main
 
 import (
@@ -10,7 +11,6 @@ import (
 func main() {
 	args := os.Args[1:]
 
-	// Check for local mode
 	isLocal := len(args) > 0 && args[0] == "local"
 	if isLocal {
 		args = args[1:]
@@ -23,15 +23,13 @@ func main() {
 		isLocal = true
 	}
 
+	var err error
 	if isLocal {
-		if err := flow.RunLocalMode(os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		err = flow.RunLocalMode(os.Stdin, os.Stdout)
+	} else {
+		err = flow.RunRemoteMode(os.Stdin, os.Stdout, args)
 	}
-
-	if err := flow.RunRemoteMode(os.Stdin, os.Stdout, args); err != nil {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

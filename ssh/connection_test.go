@@ -3,6 +3,8 @@ package ssh
 import (
 	"slices"
 	"testing"
+
+	"github.com/markjd/ccc/config"
 )
 
 func TestBuildNonInteractiveArgs(t *testing.T) {
@@ -115,6 +117,100 @@ func TestBuildArgsWithIdentityFile(t *testing.T) {
 
 	if !containsOption(args, "-i", "/home/deploy/.ssh/id_ed25519") {
 		t.Errorf("expected -i /home/deploy/.ssh/id_ed25519 in args, got %v", args)
+	}
+}
+
+func TestBuildArgsWithProxyJump(t *testing.T) {
+	c := Connection{
+		User:      "deploy",
+		Address:   "10.0.0.1",
+		ProxyJump: "bastion.example.com",
+	}
+
+	args := c.buildNonInteractiveArgs("ls")
+
+	if !containsOption(args, "-J", "bastion.example.com") {
+		t.Errorf("expected -J bastion.example.com in args, got %v", args)
+	}
+}
+
+func TestBuildArgsAllOptions(t *testing.T) {
+	c := Connection{
+		User:         "deploy",
+		Address:      "10.0.0.1",
+		Port:         2222,
+		IdentityFile: "/home/deploy/.ssh/id_ed25519",
+		ProxyJump:    "bastion",
+		SSHOptions:   []string{"-o", "ServerAliveInterval=60"},
+	}
+
+	args := c.buildNonInteractiveArgs("uptime")
+
+	// Verify all fields are present
+	if !containsOption(args, "-p", "2222") {
+		t.Errorf("missing -p 2222, got %v", args)
+	}
+	if !containsOption(args, "-i", "/home/deploy/.ssh/id_ed25519") {
+		t.Errorf("missing -i identity_file, got %v", args)
+	}
+	if !containsOption(args, "-J", "bastion") {
+		t.Errorf("missing -J bastion, got %v", args)
+	}
+	if !containsOption(args, "-o", "ServerAliveInterval=60") {
+		t.Errorf("missing -o ServerAliveInterval=60, got %v", args)
+	}
+	if !containsOption(args, "-o", "BatchMode=yes") {
+		t.Errorf("missing -o BatchMode=yes, got %v", args)
+	}
+	if !slices.Contains(args, "deploy@10.0.0.1") {
+		t.Errorf("missing deploy@10.0.0.1, got %v", args)
+	}
+
+	// Verify ordering: port, identity, proxy come before BatchMode options
+	portIdx := -1
+	batchIdx := -1
+	for i, a := range args {
+		if a == "-p" && portIdx == -1 {
+			portIdx = i
+		}
+		if a == "BatchMode=yes" {
+			batchIdx = i
+		}
+	}
+	if portIdx >= batchIdx {
+		t.Errorf("port args should come before BatchMode, port=%d batch=%d", portIdx, batchIdx)
+	}
+}
+
+func TestConnectionFromHost(t *testing.T) {
+	h := config.Host{
+		User:         "deploy",
+		Address:      "10.0.0.1",
+		Port:         2222,
+		IdentityFile: "/home/deploy/.ssh/id_ed25519",
+		ProxyJump:    "bastion",
+		SSHOptions:   []string{"-o", "Foo=bar"},
+	}
+
+	conn := ConnectionFromHost(h)
+
+	if conn.User != "deploy" {
+		t.Errorf("User = %q, want %q", conn.User, "deploy")
+	}
+	if conn.Address != "10.0.0.1" {
+		t.Errorf("Address = %q, want %q", conn.Address, "10.0.0.1")
+	}
+	if conn.Port != 2222 {
+		t.Errorf("Port = %d, want %d", conn.Port, 2222)
+	}
+	if conn.IdentityFile != "/home/deploy/.ssh/id_ed25519" {
+		t.Errorf("IdentityFile = %q, want %q", conn.IdentityFile, "/home/deploy/.ssh/id_ed25519")
+	}
+	if conn.ProxyJump != "bastion" {
+		t.Errorf("ProxyJump = %q, want %q", conn.ProxyJump, "bastion")
+	}
+	if len(conn.SSHOptions) != 2 || conn.SSHOptions[0] != "-o" {
+		t.Errorf("SSHOptions = %v, want [-o Foo=bar]", conn.SSHOptions)
 	}
 }
 

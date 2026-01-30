@@ -1,14 +1,16 @@
 package ssh
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
 
+// keyTypes lists SSH key types in preference order: ed25519 is preferred for
+// its security and performance, followed by RSA and ECDSA as fallbacks.
 var keyTypes = []string{"id_ed25519", "id_rsa", "id_ecdsa"}
 
 // FindExistingPublicKey checks for known public key files in the given
@@ -53,8 +55,10 @@ func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err == nil {
+		if copyErr := cmd.Run(); copyErr == nil {
 			return nil
+		} else {
+			fmt.Fprintf(os.Stderr, "ssh-copy-id failed (%v), trying manual copy...\n", copyErr)
 		}
 	}
 
@@ -69,7 +73,7 @@ func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
 		"umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys")
 
 	cmd := exec.Command("ssh", args...)
-	cmd.Stdin = strings.NewReader(string(pubKey))
+	cmd.Stdin = bytes.NewReader(pubKey)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

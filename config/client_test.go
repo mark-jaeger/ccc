@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -197,5 +198,56 @@ func TestSortedHostNames(t *testing.T) {
 		if name != expected[i] {
 			t.Errorf("names[%d] = %q, want %q", i, name, expected[i])
 		}
+	}
+}
+
+func TestHostValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    Host
+		wantErr bool
+	}{
+		{"valid", Host{User: "deploy", Address: "10.0.0.1"}, false},
+		{"missing user", Host{Address: "10.0.0.1"}, true},
+		{"missing address", Host{User: "deploy"}, true},
+		{"both missing", Host{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.host.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDefaultClientConfigPath(t *testing.T) {
+	path, err := DefaultClientConfigPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty path")
+	}
+	if filepath.Base(path) != "config.toml" {
+		t.Errorf("expected config.toml, got %s", filepath.Base(path))
+	}
+}
+
+func TestLoadClientConfigInvalidTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	if err := os.WriteFile(path, []byte("this is not valid toml {{{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadClientConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid TOML")
+	}
+	if errors.Is(err, ErrNoConfig) {
+		t.Fatal("should not be ErrNoConfig for invalid TOML")
 	}
 }

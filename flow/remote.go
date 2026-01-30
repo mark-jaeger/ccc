@@ -1,39 +1,31 @@
 package flow
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/markjd/ccc/config"
+	"github.com/markjd/ccc/internal/shellutil"
 	sshpkg "github.com/markjd/ccc/ssh"
 	"github.com/markjd/ccc/ui"
 )
 
-// SSHRunner executes commands over SSH.
-type SSHRunner struct {
-	Conn *sshpkg.Connection
-}
-
-func (r *SSHRunner) Run(cmd string) (string, error) {
-	return r.Conn.RunCommand(cmd)
-}
-
-func (r *SSHRunner) RunInteractive(cmd string) error {
-	return r.Conn.RunInteractive(cmd)
-}
-
 // RunRemoteMode runs ccc in remote mode (SSH to host).
 func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
-	cfgPath := config.DefaultClientConfigPath()
+	cfgPath, err := config.DefaultClientConfigPath()
+	if err != nil {
+		return err
+	}
 	cfg, err := config.LoadClientConfig(cfgPath)
 	if err != nil {
-		if err == config.ErrNoConfig {
+		if errors.Is(err, config.ErrNoConfig) {
 			return runFirstTimeSetup(in, out, cfgPath)
 		}
 		return fmt.Errorf("config error: %w", err)
 	}
 
-	// Shortcut: ccc <project> — skip host if single host
+	// Shortcut: ccc <project> — bypass host selection when only one host exists
 	if len(args) >= 1 && len(cfg.Hosts) == 1 {
 		var hostName string
 		for name := range cfg.Hosts {
@@ -49,7 +41,6 @@ func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
 		}
 	}
 
-	// Interactive host selection
 	return hostSelectionLoop(in, out, cfg, cfgPath, args)
 }
 
@@ -80,7 +71,7 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 			Items:      items,
 			ShowRemove: true,
 			ExtraActions: []ui.ExtraAction{
-				{Key: "a", Label: "Add host", Action: "add"},
+				{Key: "a", Label: "Add host", ID: "add"},
 			},
 		})
 		if err != nil {
@@ -92,15 +83,21 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 			return nil
 		case ui.ActionRemove:
 			cfg.RemoveHost(result.Selected.Key)
-			config.SaveClientConfig(cfgPath, cfg)
+			if saveErr := config.SaveClientConfig(cfgPath, cfg); saveErr != nil {
+				fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+			}
 			fmt.Fprintf(out, "  ✓ Removed %s\n", result.Selected.Key)
 			continue
 		case ui.ActionExtra:
 			if err := AddHostFlow(in, out, cfg, cfgPath); err != nil {
 				fmt.Fprintf(out, "  %v\n", err)
 			}
-			// Reload config
-			cfg, _ = config.LoadClientConfig(cfgPath)
+			// Reload config — keep old cfg on failure
+			if reloaded, loadErr := config.LoadClientConfig(cfgPath); loadErr != nil {
+				fmt.Fprintf(out, "  Warning: could not reload config: %v\n", loadErr)
+			} else {
+				cfg = reloaded
+			}
 			continue
 		case ui.ActionSelect:
 			if err := connectToHost(in, out, cfg, result.Selected.Key, nil); err != nil {
@@ -118,19 +115,12 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 		return fmt.Errorf("unknown host: %s", hostName)
 	}
 
-	conn := &sshpkg.Connection{
-		User:         host.User,
-		Address:      host.Address,
-		Port:         host.Port,
-		IdentityFile: host.IdentityFile,
-		ProxyJump:    host.ProxyJump,
-		SSHOptions:   host.SSHOptions,
-	}
+	conn := sshpkg.ConnectionFromHost(host)
 
 	fmt.Fprintf(out, "\n  Connecting to %s...\n", hostName)
 
 	// Read projects config from host
-	projectsData, err := conn.RunCommand("cat ~/.ccc/projects.toml")
+	projectsData, err := conn.Run("cat ~/.ccc/projects.toml")
 	if err != nil {
 		// Check if it's a connection issue or missing file
 		if testErr := conn.TestConnection(); testErr != nil {
@@ -146,16 +136,14 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 		return fmt.Errorf("projects config error on %s: %w", hostName, err)
 	}
 
-	runner := &SSHRunner{Conn: conn}
-
 	// Shortcut: project specified as arg
 	if len(args) >= 1 {
 		projectKey := args[0]
 		if p, ok := projects.Projects[projectKey]; ok {
 			if len(args) >= 2 && args[1] == "new" {
-				return createSession(in, out, runner, projectKey, p.Path, nil)
+				return createSession(in, out, conn, projectKey, p.Path, nil)
 			}
-			return SessionFlow(in, out, runner, projectKey, p.Path)
+			return SessionFlow(in, out, conn, projectKey, p.Path)
 		}
 		fmt.Fprintf(out, "  Unknown project: %s\n", projectKey)
 	}
@@ -163,7 +151,20 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 	scanFn := func(in io.Reader, out io.Writer) (*config.ProjectsConfig, error) {
 		return RunScanFlow(in, out, conn, hostName)
 	}
-	return ProjectFlow(in, out, runner, projects, scanFn)
+	saveFn := remoteSaveFn(conn)
+	return ProjectFlow(in, out, conn, projects, scanFn, saveFn)
+}
+
+func remoteSaveFn(conn *sshpkg.Connection) func(*config.ProjectsConfig) error {
+	return func(projects *config.ProjectsConfig) error {
+		data, err := config.SerializeProjectsConfig(projects)
+		if err != nil {
+			return err
+		}
+		writeCmd := fmt.Sprintf("mkdir -p ~/.ccc && printf '%%s' %s > ~/.ccc/projects.toml", shellutil.Quote(string(data)))
+		_, err = conn.Run(writeCmd)
+		return err
+	}
 }
 
 func runFirstTimeSetup(in io.Reader, out io.Writer, cfgPath string) error {
@@ -179,9 +180,9 @@ func runRemoteScan(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostNam
 	if err != nil || projects == nil {
 		return err
 	}
-	runner := &SSHRunner{Conn: conn}
 	scanFn := func(in io.Reader, out io.Writer) (*config.ProjectsConfig, error) {
 		return RunScanFlow(in, out, conn, hostName)
 	}
-	return ProjectFlow(in, out, runner, projects, scanFn)
+	saveFn := remoteSaveFn(conn)
+	return ProjectFlow(in, out, conn, projects, scanFn, saveFn)
 }

@@ -1,3 +1,5 @@
+// Package tailscale discovers hosts on the Tailscale network by parsing
+// the output of the tailscale CLI.
 package tailscale
 
 import (
@@ -21,6 +23,7 @@ func IsAvailable() bool {
 }
 
 // DiscoverHosts runs tailscale status --peers and returns discovered hosts.
+// The --peers flag is the default behavior but is specified explicitly for clarity.
 func DiscoverHosts() ([]TailscaleHost, error) {
 	out, err := exec.Command("tailscale", "status", "--peers").Output()
 	if err != nil {

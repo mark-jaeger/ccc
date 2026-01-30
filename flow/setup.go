@@ -45,6 +45,9 @@ func AddHostFlow(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPath 
 	return nil
 }
 
+// addHostInteractive walks the user through adding a host, either via
+// Tailscale discovery or manual entry. It validates that name, user, and
+// address are non-empty, looping on empty input.
 func addHostInteractive(in io.Reader, out io.Writer) (string, config.Host, error) {
 	var name string
 	var host config.Host
@@ -97,67 +100,88 @@ func addHostInteractive(in io.Reader, out io.Writer) (string, config.Host, error
 
 	// Manual entry
 	fmt.Fprintf(out, "\n  Enter host details manually:\n")
-	var err error
-	name, err = ui.Prompt(in, out, "Name")
-	if err != nil {
-		return "", host, err
+	var promptErr error
+	for {
+		name, promptErr = ui.Prompt(in, out, "Name")
+		if promptErr != nil {
+			return "", host, promptErr
+		}
+		if name != "" {
+			break
+		}
+		fmt.Fprintf(out, "  Name cannot be empty.\n")
 	}
-	host.User, err = ui.Prompt(in, out, "User")
-	if err != nil {
-		return "", host, err
+	for {
+		host.User, promptErr = ui.Prompt(in, out, "User")
+		if promptErr != nil {
+			return "", host, promptErr
+		}
+		if host.User != "" {
+			break
+		}
+		fmt.Fprintf(out, "  User cannot be empty.\n")
 	}
-	host.Address, err = ui.Prompt(in, out, "Address")
-	if err != nil {
-		return "", host, err
+	for {
+		host.Address, promptErr = ui.Prompt(in, out, "Address")
+		if promptErr != nil {
+			return "", host, promptErr
+		}
+		if host.Address != "" {
+			break
+		}
+		fmt.Fprintf(out, "  Address cannot be empty.\n")
 	}
 
 	return name, host, testAndSetupKeys(in, out, name, &host)
 }
 
+// testAndSetupKeys verifies the SSH connection works. On failure it offers to
+// set up SSH keys or try a different user, looping until success or cancel.
 func testAndSetupKeys(in io.Reader, out io.Writer, hostName string, host *config.Host) error {
-	conn := &sshpkg.Connection{
-		User:    host.User,
-		Address: host.Address,
-		Port:    host.Port,
-	}
+	for {
+		conn := sshpkg.ConnectionFromHost(*host)
 
-	fmt.Fprintf(out, "  Testing connection...\n")
-	if err := conn.TestConnection(); err != nil {
-		fmt.Fprintf(out, "  Authentication failed for %s@%s.\n", host.User, host.Address)
+		fmt.Fprintf(out, "  Testing connection...\n")
+		if err := conn.TestConnection(); err != nil {
+			fmt.Fprintf(out, "  Authentication failed for %s@%s.\n", host.User, host.Address)
 
-		result, menuErr := ui.ShowMenu(in, out, ui.MenuConfig{
-			Title: "Options",
-			Items: []ui.MenuItem{
-				{Key: "keys", Label: "Set up SSH keys now"},
-				{Key: "user", Label: "Try a different user"},
-				{Key: "cancel", Label: "Cancel"},
-			},
-		})
-		if menuErr != nil {
-			return menuErr
-		}
-
-		switch result.Selected.Key {
-		case "keys":
-			return setupKeysFlow(in, out, host)
-		case "user":
-			newUser, err := ui.Prompt(in, out, "User")
-			if err != nil {
-				return err
+			result, menuErr := ui.ShowMenu(in, out, ui.MenuConfig{
+				Title: "Options",
+				Items: []ui.MenuItem{
+					{Key: "keys", Label: "Set up SSH keys now"},
+					{Key: "user", Label: "Try a different user"},
+					{Key: "cancel", Label: "Cancel"},
+				},
+			})
+			if menuErr != nil {
+				return menuErr
 			}
-			host.User = newUser
-			return testAndSetupKeys(in, out, hostName, host)
-		default:
-			return fmt.Errorf("cancelled")
-		}
-	}
 
-	fmt.Fprintf(out, "  ✓ Connected.\n")
-	return nil
+			switch result.Selected.Key {
+			case "keys":
+				return setupKeysFlow(in, out, host)
+			case "user":
+				newUser, promptErr := ui.Prompt(in, out, "User")
+				if promptErr != nil {
+					return promptErr
+				}
+				host.User = newUser
+				continue // retry with new user
+			default:
+				return fmt.Errorf("cancelled")
+			}
+		}
+
+		fmt.Fprintf(out, "  ✓ Connected.\n")
+		return nil
+	}
 }
 
 func setupKeysFlow(in io.Reader, out io.Writer, host *config.Host) error {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
 	sshDir := filepath.Join(home, ".ssh")
 
 	pubKey, err := sshpkg.FindExistingPublicKey(sshDir)
@@ -182,7 +206,7 @@ func setupKeysFlow(in io.Reader, out io.Writer, host *config.Host) error {
 	}
 
 	fmt.Fprintf(out, "  ✓ Key installed. Testing connection...\n")
-	conn := &sshpkg.Connection{User: host.User, Address: host.Address, Port: host.Port}
+	conn := sshpkg.ConnectionFromHost(*host)
 	if err := conn.TestConnection(); err != nil {
 		return fmt.Errorf("still cannot connect after key setup: %w", err)
 	}

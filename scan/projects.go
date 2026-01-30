@@ -1,3 +1,5 @@
+// Package scan builds shell commands to discover git repositories using
+// platform-specific tools, and parses the results into project entries.
 package scan
 
 import (
@@ -5,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/markjd/ccc/internal/shellutil"
 )
 
 // ScanResult represents a discovered project directory.
@@ -15,7 +19,9 @@ type ScanResult struct {
 
 // BuildScanChainCommand returns a shell command that tries discovery tools in
 // order, using the first one that produces non-empty output:
-// mdfind -> locate/plocate -> fd -> find.
+// mdfind -> plocate -> locate -> fd -> find.
+// Each tool is only tried if present on the system (checked via command -v).
+// The find fallback always runs as it's universally available.
 func BuildScanChainCommand(homeDir string) string {
 	mdfind := buildMdfindCommand(homeDir)
 	locate := buildLocateCommand(homeDir)
@@ -46,27 +52,29 @@ func BuildScanChainCommand(homeDir string) string {
 // buildMdfindCommand returns the mdfind shell command for discovering .git
 // entries under homeDir.
 func buildMdfindCommand(homeDir string) string {
-	return fmt.Sprintf(`mdfind "kMDItemFSName == '.git'" -onlyin %s`, homeDir)
+	return fmt.Sprintf(`mdfind "kMDItemFSName == '.git'" -onlyin %s`, shellutil.Quote(homeDir))
 }
 
 // buildLocateCommand returns a locate/plocate shell command for discovering
 // .git entries under homeDir.
 func buildLocateCommand(homeDir string) string {
-	return fmt.Sprintf(`plocate --regex '%s/.*/.git$' 2>/dev/null || locate --regex '%s/.*/.git$'`, homeDir, homeDir)
+	escaped := regexp.QuoteMeta(homeDir)
+	return fmt.Sprintf(`plocate --regex '%s/.*/.git$' 2>/dev/null || locate --regex '%s/.*/.git$'`, escaped, escaped)
 }
 
 // buildFdCommand returns an fd shell command for discovering .git entries under
-// homeDir.
+// homeDir. Matches both directories (.git/) and files (.git for submodules).
 func buildFdCommand(homeDir string) string {
-	return fmt.Sprintf(`fd -H -t d -t f '^\\.git$' %s --max-depth 4`, homeDir)
+	return fmt.Sprintf(`fd -H -t d -t f '^\\.git$' %s --max-depth 4`, shellutil.Quote(homeDir))
 }
 
 // buildFindCommand returns a find shell command for discovering .git entries
-// under homeDir, with common directory exclusions.
+// under homeDir, matching both directories and files (.git can be a file in
+// submodules). Common noise directories are excluded.
 func buildFindCommand(homeDir string) string {
 	return fmt.Sprintf(
 		`find %s -maxdepth 4 -name .git \( -type d -o -type f \) -not -path '*/node_modules/*' -not -path '*/Library/*' -not -path '*/.cache/*' -not -path '*/.Trash/*'`,
-		homeDir,
+		shellutil.Quote(homeDir),
 	)
 }
 

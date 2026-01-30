@@ -1,3 +1,5 @@
+// Package ui provides interactive terminal menus, prompts, and confirmations
+// for user input.
 package ui
 
 import (
@@ -29,9 +31,9 @@ type MenuItem struct {
 // ExtraAction represents an additional action available in the menu
 // beyond standard select/quit/back/remove.
 type ExtraAction struct {
-	Key    string // single char like "a", "s", "n"
-	Label  string // display text
-	Action string // returned in result
+	Key   string // single char like "a", "s", "n"
+	Label string // display text
+	ID    string // returned in MenuResult.ExtraKey
 }
 
 // MenuConfig holds the configuration for displaying a menu.
@@ -62,10 +64,8 @@ func ShowMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
 	}
 
 	for {
-		// Display title
 		fmt.Fprintf(out, "\n  %s\n", cfg.Title)
 
-		// Display numbered items
 		for i, item := range cfg.Items {
 			if item.Extra != "" {
 				fmt.Fprintf(out, "  [%d] %s %s\n", i+1, item.Label, item.Extra)
@@ -74,55 +74,51 @@ func ShowMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
 			}
 		}
 
-		// Display extra actions
 		for _, ea := range cfg.ExtraActions {
 			fmt.Fprintf(out, "  [%s] %s\n", ea.Key, ea.Label)
 		}
 
-		// Display back option
 		if cfg.ShowBack {
 			fmt.Fprintf(out, "  [b] Back\n")
 		}
-
-		// Always display quit
 		fmt.Fprintf(out, "  [q] Quit\n")
 
-		// Display prompt
 		if cfg.ShowRemove {
 			fmt.Fprintf(out, "\n  %s (or 'r' to remove): ", prompt)
 		} else {
 			fmt.Fprintf(out, "\n  %s: ", prompt)
 		}
 
-		// Read input
 		if !scanner.Scan() {
 			return MenuResult{Action: ActionQuit}, scanner.Err()
 		}
 		input := strings.TrimSpace(scanner.Text())
 
-		// Handle quit
 		if input == "q" {
 			return MenuResult{Action: ActionQuit}, nil
 		}
 
-		// Handle back
 		if input == "b" && cfg.ShowBack {
 			return MenuResult{Action: ActionBack}, nil
 		}
 
-		// Handle remove
 		if input == "r" && cfg.ShowRemove {
-			return handleRemove(scanner, out, cfg)
+			result, ok, err := handleRemove(scanner, out, cfg)
+			if err != nil {
+				return MenuResult{Action: ActionQuit}, err
+			}
+			if !ok {
+				continue
+			}
+			return result, nil
 		}
 
-		// Handle extra actions
 		for _, ea := range cfg.ExtraActions {
 			if input == ea.Key {
-				return MenuResult{Action: ActionExtra, ExtraKey: ea.Action}, nil
+				return MenuResult{Action: ActionExtra, ExtraKey: ea.ID}, nil
 			}
 		}
 
-		// Handle numeric selection
 		num, err := strconv.Atoi(input)
 		if err != nil || num < 1 || num > len(cfg.Items) {
 			fmt.Fprintf(out, "  Invalid selection. Try again.\n")
@@ -133,28 +129,30 @@ func ShowMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
 }
 
 // handleRemove manages the remove flow: pick item number, then confirm y/n.
-func handleRemove(scanner *bufio.Scanner, out io.Writer, cfg MenuConfig) (MenuResult, error) {
+// Returns (result, true, nil) on confirmed removal, or (_, false, nil) to
+// return to the menu on invalid selection or declined confirmation.
+func handleRemove(scanner *bufio.Scanner, out io.Writer, cfg MenuConfig) (MenuResult, bool, error) {
 	fmt.Fprintf(out, "  Select item to remove: ")
 	if !scanner.Scan() {
-		return MenuResult{Action: ActionQuit}, scanner.Err()
+		return MenuResult{}, false, scanner.Err()
 	}
 	input := strings.TrimSpace(scanner.Text())
 	num, err := strconv.Atoi(input)
 	if err != nil || num < 1 || num > len(cfg.Items) {
 		fmt.Fprintf(out, "  Invalid selection.\n")
-		return MenuResult{Action: ActionQuit}, nil
+		return MenuResult{}, false, nil
 	}
 	item := cfg.Items[num-1]
 
 	fmt.Fprintf(out, "  Remove %s? (y/n): ", item.Label)
 	if !scanner.Scan() {
-		return MenuResult{Action: ActionQuit}, scanner.Err()
+		return MenuResult{}, false, scanner.Err()
 	}
 	confirm := strings.TrimSpace(scanner.Text())
 	if confirm != "y" && confirm != "Y" {
-		return MenuResult{Action: ActionQuit}, nil
+		return MenuResult{}, false, nil
 	}
-	return MenuResult{Action: ActionRemove, Selected: item}, nil
+	return MenuResult{Action: ActionRemove, Selected: item}, true, nil
 }
 
 // Prompt asks a simple question and returns the trimmed answer.

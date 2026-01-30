@@ -1,7 +1,10 @@
+// Package config handles reading, writing, and validating TOML configuration
+// files for client hosts and project tracking.
 package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,9 +31,24 @@ type ClientConfig struct {
 }
 
 // DefaultClientConfigPath returns the default path for the client config file.
-func DefaultClientConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".ccc", "config.toml")
+// Returns an error if the home directory cannot be determined.
+func DefaultClientConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".ccc", "config.toml"), nil
+}
+
+// Validate checks that the host has the minimum required fields.
+func (h Host) Validate() error {
+	if h.User == "" {
+		return fmt.Errorf("host user is required")
+	}
+	if h.Address == "" {
+		return fmt.Errorf("host address is required")
+	}
+	return nil
 }
 
 // LoadClientConfig reads and parses a TOML client config from the given path.
@@ -55,7 +73,8 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 }
 
 // SaveClientConfig serializes the config to TOML and writes it to the given path.
-// It creates parent directories as needed and sets file permissions to 0600.
+// Parent directories are created with mode 0700; the file itself is written with
+// mode 0600.
 func SaveClientConfig(path string, cfg *ClientConfig) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {

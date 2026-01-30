@@ -122,3 +122,26 @@ func TestDeriveProjectKey(t *testing.T) {
 		}
 	}
 }
+
+func TestDeriveProjectKeySpecialChars(t *testing.T) {
+	got := DeriveProjectKey("/home/user/@project.name!")
+	if got != "projectname" {
+		t.Errorf("DeriveProjectKey with special chars = %q, want %q", got, "projectname")
+	}
+}
+
+func TestDeriveProjectKeyLeadingHyphens(t *testing.T) {
+	got := DeriveProjectKey("/home/user/---my-project---")
+	if got != "my-project" {
+		t.Errorf("DeriveProjectKey with leading/trailing hyphens = %q, want %q", got, "my-project")
+	}
+}
+
+func TestBuildScanCommandsQuoteSpaces(t *testing.T) {
+	cmd := BuildScanChainCommand("/Users/mark/My Projects")
+
+	// The path with spaces should be properly quoted
+	if !strings.Contains(cmd, "'/Users/mark/My Projects'") {
+		t.Errorf("expected quoted path with spaces in command: %s", cmd)
+	}
+}

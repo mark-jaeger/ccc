@@ -3,9 +3,11 @@ package flow
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/markjd/ccc/config"
+	"github.com/markjd/ccc/internal/shellutil"
 	"github.com/markjd/ccc/scan"
 	sshpkg "github.com/markjd/ccc/ssh"
 	"github.com/markjd/ccc/ui"
@@ -14,15 +16,18 @@ import (
 // RunScanFlow discovers projects on a host and saves projects.toml.
 func RunScanFlow(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostName string) (*config.ProjectsConfig, error) {
 	// Get home directory
-	homeDir, err := conn.RunCommand("echo $HOME")
+	homeDir, err := conn.Run("echo $HOME")
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
 	fmt.Fprintf(out, "\n  Scanning for git repositories in %s...\n", homeDir)
 	scanCmd := scan.BuildScanChainCommand(homeDir)
-	scanOutput, err := conn.RunCommand(scanCmd)
-	if err != nil || strings.TrimSpace(scanOutput) == "" {
+	scanOutput, err := conn.Run(scanCmd)
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	if strings.TrimSpace(scanOutput) == "" {
 		return handleNoResults(in, out, conn, hostName)
 	}
 
@@ -54,9 +59,15 @@ func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostN
 
 		// Rescan after shell exit
 		fmt.Fprintf(out, "\n  Rescanning...\n")
-		homeDir, _ := conn.RunCommand("echo $HOME")
+		homeDir, homeErr := conn.Run("echo $HOME")
+		if homeErr != nil {
+			return nil, fmt.Errorf("cannot determine home directory: %w", homeErr)
+		}
 		shellScanCmd := scan.BuildScanChainCommand(homeDir)
-		shellScanOutput, _ := conn.RunCommand(shellScanCmd)
+		shellScanOutput, shellErr := conn.Run(shellScanCmd)
+		if shellErr != nil {
+			return nil, fmt.Errorf("rescan failed: %w", shellErr)
+		}
 		results := scan.ParseScanResults(shellScanOutput)
 		if len(results) == 0 {
 			fmt.Fprintf(out, "  Still no projects found.\n")
@@ -71,7 +82,10 @@ func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostN
 		return nil, err
 	}
 	pathScanCmd := scan.BuildScanChainCommand(path)
-	pathScanOutput, _ := conn.RunCommand(pathScanCmd)
+	pathScanOutput, pathErr := conn.Run(pathScanCmd)
+	if pathErr != nil {
+		return nil, fmt.Errorf("scan of %s failed: %w", path, pathErr)
+	}
 	results := scan.ParseScanResults(pathScanOutput)
 	if len(results) == 0 {
 		fmt.Fprintf(out, "  No projects found at %s.\n", path)
@@ -100,10 +114,8 @@ func selectProjects(in io.Reader, out io.Writer, conn *sshpkg.Connection, result
 		}
 	} else {
 		for _, part := range strings.Split(answer, ",") {
-			part = strings.TrimSpace(part)
-			idx := 0
-			fmt.Sscanf(part, "%d", &idx)
-			if idx >= 1 && idx <= len(results) {
+			idx, err := strconv.Atoi(strings.TrimSpace(part))
+			if err == nil && idx >= 1 && idx <= len(results) {
 				r := results[idx-1]
 				key := scan.DeriveProjectKey(r.Path)
 				projects.Projects[key] = config.Project{Path: r.Path}
@@ -121,8 +133,8 @@ func selectProjects(in io.Reader, out io.Writer, conn *sshpkg.Connection, result
 	if err != nil {
 		return nil, err
 	}
-	writeCmd := fmt.Sprintf("mkdir -p ~/.ccc && cat > ~/.ccc/projects.toml << 'CCCEOF'\n%s\nCCCEOF", string(data))
-	if _, err := conn.RunCommand(writeCmd); err != nil {
+	writeCmd := fmt.Sprintf("mkdir -p ~/.ccc && printf '%%s' %s > ~/.ccc/projects.toml", shellutil.Quote(string(data)))
+	if _, err := conn.Run(writeCmd); err != nil {
 		return nil, fmt.Errorf("failed to write projects.toml: %w", err)
 	}
 	fmt.Fprintf(out, "  Saved %d projects to ~/.ccc/projects.toml\n", len(projects.Projects))

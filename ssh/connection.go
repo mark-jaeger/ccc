@@ -1,3 +1,5 @@
+// Package ssh provides SSH connection management, key discovery, and remote
+// command execution.
 package ssh
 
 import (
@@ -7,8 +9,22 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/markjd/ccc/config"
 	"github.com/markjd/ccc/internal/shellutil"
 )
+
+// ConnectionFromHost creates a Connection from a config.Host, copying all
+// relevant fields.
+func ConnectionFromHost(h config.Host) *Connection {
+	return &Connection{
+		User:         h.User,
+		Address:      h.Address,
+		Port:         h.Port,
+		IdentityFile: h.IdentityFile,
+		ProxyJump:    h.ProxyJump,
+		SSHOptions:   h.SSHOptions,
+	}
+}
 
 // Connection holds SSH connection parameters.
 type Connection struct {
@@ -45,8 +61,9 @@ func (c *Connection) commonArgs() []string {
 }
 
 // buildNonInteractiveArgs constructs the ssh argument list for non-interactive
-// command execution. It enables BatchMode, accepts new host keys, and sets a
-// connect timeout.
+// command execution. It enables BatchMode, sets a connect timeout, and uses
+// StrictHostKeyChecking=accept-new for trust-on-first-use (TOFU) semantics:
+// new host keys are accepted automatically, but changed keys are rejected.
 func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
 	args = append(args,
@@ -72,9 +89,9 @@ func (c *Connection) appendRemoteCmd(args []string, cmd string) []string {
 	return args
 }
 
-// RunCommand executes a remote command non-interactively and returns the
-// trimmed stdout output.
-func (c *Connection) RunCommand(cmd string) (string, error) {
+// Run executes a remote command non-interactively and returns the
+// trimmed stdout output. Connection implements the flow.Runner interface.
+func (c *Connection) Run(cmd string) (string, error) {
 	args := c.buildNonInteractiveArgs(cmd)
 	out, err := exec.Command("ssh", args...).Output()
 	if err != nil {
@@ -96,7 +113,7 @@ func (c *Connection) RunInteractive(cmd string) error {
 
 // TestConnection verifies that the SSH connection works by running "echo ok".
 func (c *Connection) TestConnection() error {
-	out, err := c.RunCommand("echo ok")
+	out, err := c.Run("echo ok")
 	if err != nil {
 		return fmt.Errorf("connection test failed: %w", err)
 	}

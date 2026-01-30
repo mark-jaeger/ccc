@@ -1,3 +1,5 @@
+// Package flow orchestrates the user-facing workflows: host selection,
+// project browsing, session management, and first-time setup.
 package flow
 
 import (
@@ -13,13 +15,17 @@ import (
 
 // Runner abstracts command execution (SSH or local).
 type Runner interface {
+	// Run executes a command non-interactively and returns trimmed stdout.
 	Run(cmd string) (string, error)
+	// RunInteractive executes a command with full stdin/stdout/stderr passthrough.
 	RunInteractive(cmd string) error
 }
 
 // ProjectFlow handles project selection -> session selection -> attach/create.
 // onScan is an optional callback invoked when the user selects [s] Scan.
-func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.ProjectsConfig, onScan func(io.Reader, io.Writer) (*config.ProjectsConfig, error)) error {
+// onSave is an optional callback invoked after a project is removed, allowing
+// the caller to persist the updated config. If nil, removals are in-memory only.
+func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.ProjectsConfig, onScan func(io.Reader, io.Writer) (*config.ProjectsConfig, error), onSave func(*config.ProjectsConfig) error) error {
 	for {
 		keys := projects.SortedProjectKeys()
 		if len(keys) == 0 {
@@ -38,7 +44,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 			Items:    items,
 			ShowBack: true,
 			ExtraActions: []ui.ExtraAction{
-				{Key: "s", Label: "Scan for projects", Action: "scan"},
+				{Key: "s", Label: "Scan for projects", ID: "scan"},
 			},
 		})
 		if err != nil {
@@ -46,9 +52,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 		}
 
 		switch result.Action {
-		case ui.ActionQuit:
-			return nil
-		case ui.ActionBack:
+		case ui.ActionQuit, ui.ActionBack:
 			return nil
 		case ui.ActionExtra:
 			if result.ExtraKey == "scan" {
@@ -80,6 +84,11 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 				if answer {
 					delete(projects.Projects, projectKey)
 					fmt.Fprintf(out, "  Removed %s.\n", projectKey)
+					if onSave != nil {
+						if saveErr := onSave(projects); saveErr != nil {
+							fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+						}
+					}
 				}
 				continue
 			}
@@ -91,12 +100,10 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 
 // SessionFlow handles session listing -> attach or create.
 func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string) error {
-	// Check tmux is available
 	if err := CheckTmux(in, out, runner); err != nil {
 		return err
 	}
 
-	// List sessions
 	listCmd := tmux.BuildListCommand()
 	listOutput, err := runner.Run(listCmd)
 	if err != nil {
@@ -133,7 +140,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		ShowBack:   true,
 		ShowRemove: true,
 		ExtraActions: []ui.ExtraAction{
-			{Key: "n", Label: "New session", Action: "new"},
+			{Key: "n", Label: "New session", ID: "new"},
 		},
 	})
 	if err != nil {
@@ -141,9 +148,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 	}
 
 	switch result.Action {
-	case ui.ActionQuit:
-		return nil
-	case ui.ActionBack:
+	case ui.ActionQuit, ui.ActionBack:
 		return nil
 	case ui.ActionExtra:
 		return createSession(in, out, runner, projectKey, projectPath, sessions)
@@ -169,7 +174,10 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Sess
 	}
 
 	// Check for other clients
-	clientOutput, _ := runner.Run(tmux.BuildListClientsCommand(session.Name))
+	clientOutput, clientErr := runner.Run(tmux.BuildListClientsCommand(session.Name))
+	if clientErr != nil {
+		fmt.Fprintf(out, "  Warning: could not list clients: %v\n", clientErr)
+	}
 	clients := tmux.ParseClientList(clientOutput)
 	if len(clients) > 0 {
 		c := clients[0]
@@ -190,7 +198,9 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Sess
 			return nil
 		}
 		if detachResult.Selected.Key == "detach" {
-			runner.Run(tmux.BuildDetachClientsCommand(session.Name))
+			if _, detachErr := runner.Run(tmux.BuildDetachClientsCommand(session.Name)); detachErr != nil {
+				fmt.Fprintf(out, "  Warning: could not detach clients: %v\n", detachErr)
+			}
 		}
 	}
 
@@ -224,6 +234,7 @@ func removeSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem,
 	for _, s := range sessions {
 		if s.Name == item.Key && !s.Verified {
 			fmt.Fprintf(out, "\n  Warning: session %q wasn't created by ccc.\n", s.Name)
+			break
 		}
 	}
 

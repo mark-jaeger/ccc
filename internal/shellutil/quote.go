@@ -1,3 +1,5 @@
+// Package shellutil provides shell-safe string quoting for constructing
+// commands.
 package shellutil
 
 import "strings"

@@ -89,6 +89,13 @@ func TestSerializeProjectsConfig(t *testing.T) {
 	}
 }
 
+func TestParseProjectsConfigInvalid(t *testing.T) {
+	_, err := ParseProjectsConfig([]byte("this is {{not valid toml"))
+	if err == nil {
+		t.Fatal("expected error for invalid TOML")
+	}
+}
+
 func TestSortedProjectKeys(t *testing.T) {
 	cfg := &ProjectsConfig{
 		Projects: map[string]Project{

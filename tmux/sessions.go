@@ -1,3 +1,5 @@
+// Package tmux provides session listing, creation, attachment, and metadata
+// management for tmux sessions tagged with ccc project information.
 package tmux
 
 import (
@@ -24,7 +26,11 @@ type Client struct {
 	Height int
 }
 
+// listFormat is the tmux -F format string for session listing.
+// Fields are |||-delimited: name, ccc_project tag, ccc_path tag, window count.
 const listFormat = "#{session_name}|||#{@ccc_project}|||#{@ccc_path}|||#{session_windows}"
+
+// clientFormat is the tmux -F format string for client listing.
 const clientFormat = "#{client_tty}: #{client_width}x#{client_height} #{client_flags}"
 
 // BuildListCommand returns a shell command that lists all tmux sessions.
@@ -67,7 +73,7 @@ func BuildCheckTmuxCommand() string {
 	return "command -v tmux"
 }
 
-// ParseSessionList parses the |||‑delimited output of BuildListCommand into
+// ParseSessionList parses the |||-delimited output of BuildListCommand into
 // a slice of Session values. Returns nil for empty input.
 func ParseSessionList(output string) []Session {
 	output = strings.TrimSpace(output)
@@ -99,9 +105,6 @@ func ParseSessionList(output string) []Session {
 		})
 	}
 
-	if len(sessions) == 0 {
-		return nil
-	}
 	return sessions
 }
 
@@ -110,8 +113,6 @@ func ParseSessionList(output string) []Session {
 // Verified=true. Untagged sessions whose name equals projectKey or starts
 // with projectKey+"-" are returned with Verified=false.
 func FilterSessionsForProject(sessions []Session, projectKey string) []Session {
-	// Collect names already matched by metadata so we don't double-count.
-	metadataNames := map[string]bool{}
 	var result []Session
 
 	// First pass: metadata matches.
@@ -119,7 +120,6 @@ func FilterSessionsForProject(sessions []Session, projectKey string) []Session {
 		if s.Project == projectKey {
 			s.Verified = true
 			result = append(result, s)
-			metadataNames[s.Name] = true
 		}
 	}
 
@@ -129,11 +129,7 @@ func FilterSessionsForProject(sessions []Session, projectKey string) []Session {
 		if s.Project != "" {
 			continue // already tagged — skip
 		}
-		if metadataNames[s.Name] {
-			continue // already included via metadata
-		}
 		if s.Name == projectKey || strings.HasPrefix(s.Name, prefix) {
-			s.Verified = false
 			result = append(result, s)
 		}
 	}
