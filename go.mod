@@ -1,4 +1,4 @@
-module github.com/markjd/ccc
+module github.com/mark-jaeger/ccc
 
 go 1.25.6
 

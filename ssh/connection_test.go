@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/markjd/ccc/config"
+	"github.com/mark-jaeger/ccc/config"
 )
 
 func TestBuildNonInteractiveArgs(t *testing.T) {

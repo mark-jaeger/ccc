@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/markjd/ccc/config"
+	"github.com/mark-jaeger/ccc/config"
 )
 
 // mockRunner implements the Runner interface for testing.
