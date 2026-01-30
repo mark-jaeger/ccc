@@ -206,6 +206,9 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Sess
 		}
 	}
 
+	// Ensure bell/passthrough options are set (fixes sessions from older ccc versions).
+	runner.Run(tmux.BuildEnsureNotifyOptionsCommand(session.Name))
+
 	fmt.Fprintf(out, "\n  Attaching to %s...\n", session.Name)
 	return runner.RunInteractive(tmux.BuildAttachCommand(session.Name))
 }

@@ -162,6 +162,28 @@ func TestBuildSetPassthroughCommand(t *testing.T) {
 	}
 }
 
+func TestBuildEnsureNotifyOptionsCommand(t *testing.T) {
+	cmd := BuildEnsureNotifyOptionsCommand("rt1")
+	// Should set bell-action and visual-bell in one compound command,
+	// then allow-passthrough separately (tmux < 3.3 compat), ending with "true".
+	if !strings.Contains(cmd, "bell-action any") {
+		t.Errorf("expected bell-action any in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "visual-bell off") {
+		t.Errorf("expected visual-bell off in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "allow-passthrough on") {
+		t.Errorf("expected allow-passthrough on in: %s", cmd)
+	}
+	if !strings.Contains(cmd, "2>/dev/null") {
+		t.Errorf("expected 2>/dev/null for backward compat in: %s", cmd)
+	}
+	// Must end with "true" so the overall command succeeds even if passthrough fails
+	if !strings.HasSuffix(strings.TrimSpace(cmd), "true") {
+		t.Errorf("expected command to end with 'true' for backward compat in: %s", cmd)
+	}
+}
+
 func TestBuildListCommand(t *testing.T) {
 	cmd := BuildListCommand()
 	if cmd == "" {
