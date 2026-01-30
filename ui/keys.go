@@ -17,12 +17,13 @@ const (
 
 // readKey reads a single key event from a raw-mode file descriptor.
 // It detects escape sequences for arrow keys and returns keyRune + the
-// rune for printable characters.
+// rune for printable characters. On read errors it returns keyEsc so
+// callers exit cleanly instead of spinning.
 func readKey(f *os.File) (keyEvent, rune) {
-	buf := make([]byte, 3)
-	n, err := f.Read(buf)
+	var buf [3]byte
+	n, err := f.Read(buf[:])
 	if err != nil || n == 0 {
-		return keyNone, 0
+		return keyEsc, 0
 	}
 
 	switch {

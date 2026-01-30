@@ -228,6 +228,9 @@ func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, proje
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
+	// Enable passthrough for notifications (tmux >= 3.3, ignore errors on older).
+	runner.Run(tmux.BuildSetPassthroughCommand(name))
+
 	fmt.Fprintf(out, "  \u2713 Created session %s\n", name)
 	return runner.RunInteractive(tmux.BuildAttachCommand(name))
 }

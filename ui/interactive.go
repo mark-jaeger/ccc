@@ -126,7 +126,7 @@ func renderMenu(out *os.File, cfg MenuConfig, cursor int, actionBar string) int 
 	// Action bar
 	fmt.Fprintf(out, "\x1b[2K\r\n\x1b[2K\r  %s", actionBar)
 
-	return len(cfg.Items) + 4 // blank + title + items + blank + bar
+	return len(cfg.Items) + 3 // newlines: blank + title + N items + blank (bar has no trailing \n)
 }
 
 // buildActionBar constructs the bottom action bar string from the menu config.

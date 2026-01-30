@@ -47,9 +47,13 @@ func BuildListClientsCommand(session string) string {
 // session with ccc metadata tags.
 //
 // Session options (set-option): @ccc_project, @ccc_path, bell-action.
-// Window options (set-window-option): visual-bell, allow-passthrough.
+// Window options (set-window-option): visual-bell.
 // Window options must use set-window-option so they apply to the initial
 // window created by new-session, not just as a session-level default.
+//
+// Note: allow-passthrough is set separately via BuildSetPassthroughCommand
+// because it requires tmux >= 3.3 and must not break session creation on
+// older versions.
 func BuildCreateCommand(name, path, projectKey string) string {
 	qn := shellutil.Quote(name)
 	return fmt.Sprintf(
@@ -57,15 +61,20 @@ func BuildCreateCommand(name, path, projectKey string) string {
 			" \\; set-option -t %s @ccc_project %s"+
 			" \\; set-option -t %s @ccc_path %s"+
 			" \\; set-option -t %s bell-action any"+
-			" \\; set-window-option -t %s visual-bell off"+
-			" \\; set-window-option -t %s allow-passthrough on",
+			" \\; set-window-option -t %s visual-bell off",
 		qn, shellutil.Quote(path),
 		qn, shellutil.Quote(projectKey),
 		qn, shellutil.Quote(path),
 		qn,
 		qn,
-		qn,
 	)
+}
+
+// BuildSetPassthroughCommand returns a shell command to enable escape sequence
+// passthrough on a session. This requires tmux >= 3.3; callers should ignore
+// errors for backward compatibility with older tmux versions.
+func BuildSetPassthroughCommand(name string) string {
+	return fmt.Sprintf("tmux set-window-option -t %s allow-passthrough on", shellutil.Quote(name))
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.

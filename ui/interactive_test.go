@@ -78,9 +78,9 @@ func TestRenderMenuOutput(t *testing.T) {
 
 	lines := renderMenu(f, cfg, 0, bar)
 
-	// Expected: blank line, title, 2 items, blank line, action bar = 6 lines
-	if lines != 6 {
-		t.Errorf("expected 6 lines, got %d", lines)
+	// Newlines emitted: blank + title + 2 items + blank = 5 (action bar has no trailing \n)
+	if lines != 5 {
+		t.Errorf("expected 5 lines, got %d", lines)
 	}
 
 	// Read back the output
@@ -165,6 +165,83 @@ func TestMenuItemActionLineFallback(t *testing.T) {
 	}
 	if result.Selected.Key != "s1" {
 		t.Errorf("expected selected s1, got %+v", result.Selected)
+	}
+}
+
+func TestReadKeyArrowUp(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{0x1b, '[', 'A'})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyUp {
+		t.Errorf("expected keyUp, got %d", evt)
+	}
+}
+
+func TestReadKeyArrowDown(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{0x1b, '[', 'B'})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyDown {
+		t.Errorf("expected keyDown, got %d", evt)
+	}
+}
+
+func TestReadKeyEnter(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{13})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyEnter {
+		t.Errorf("expected keyEnter, got %d", evt)
+	}
+}
+
+func TestReadKeyCtrlC(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{3})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyCtrlC {
+		t.Errorf("expected keyCtrlC, got %d", evt)
+	}
+}
+
+func TestReadKeyEsc(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{27})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyEsc {
+		t.Errorf("expected keyEsc, got %d", evt)
+	}
+}
+
+func TestReadKeyRune(t *testing.T) {
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{'q'})
+	w.Close()
+	evt, ch := readKey(r)
+	if evt != keyRune || ch != 'q' {
+		t.Errorf("expected keyRune 'q', got %d %c", evt, ch)
+	}
+}
+
+func TestReadKeyClosedPipe(t *testing.T) {
+	r, w, _ := os.Pipe()
+	w.Close()
+	evt, _ := readKey(r)
+	r.Close()
+	// Closed pipe should return keyEsc (not keyNone) to exit cleanly
+	if evt != keyEsc {
+		t.Errorf("expected keyEsc on closed pipe, got %d", evt)
 	}
 }
 
