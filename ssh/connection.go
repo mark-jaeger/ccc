@@ -85,7 +85,7 @@ func (c *Connection) buildInteractiveArgs(cmd string) []string {
 // appendRemoteCmd adds the target and shell-quoted remote command to args.
 func (c *Connection) appendRemoteCmd(args []string, cmd string) []string {
 	args = append(args, c.target())
-	args = append(args, "bash -lc "+shellutil.Quote(cmd))
+	args = append(args, "$SHELL -lc "+shellutil.Quote(cmd))
 	return args
 }
 
