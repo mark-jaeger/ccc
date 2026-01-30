@@ -236,10 +236,16 @@ func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, proje
 }
 
 func detachSessionClients(out io.Writer, runner Runner, item ui.MenuItem) {
+	clientOutput, _ := runner.Run(tmux.BuildListClientsCommand(item.Key))
+	clients := tmux.ParseClientList(clientOutput)
+	if len(clients) == 0 {
+		fmt.Fprintf(out, "  No clients attached to %s.\n", item.Key)
+		return
+	}
 	if _, err := runner.Run(tmux.BuildDetachClientsCommand(item.Key)); err != nil {
 		fmt.Fprintf(out, "  Warning: could not detach clients: %v\n", err)
 	} else {
-		fmt.Fprintf(out, "  Detached clients from %s.\n", item.Key)
+		fmt.Fprintf(out, "  Detached %d client(s) from %s.\n", len(clients), item.Key)
 	}
 }
 
