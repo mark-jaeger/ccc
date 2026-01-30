@@ -172,7 +172,10 @@ func runFirstTimeSetup(in io.Reader, out io.Writer, cfgPath string) error {
 }
 
 func runRemoteScan(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostName string) error {
-	// TODO: run scan chain, present results, save projects.toml (Task 13)
-	fmt.Fprintf(out, "  Remote scan not yet fully implemented.\n")
-	return nil
+	projects, err := RunScanFlow(in, out, conn, hostName)
+	if err != nil || projects == nil {
+		return err
+	}
+	runner := &SSHRunner{Conn: conn}
+	return ProjectFlow(in, out, runner, projects)
 }
