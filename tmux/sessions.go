@@ -46,9 +46,10 @@ func BuildListClientsCommand(session string) string {
 // BuildCreateCommand returns a shell command that creates a new detached tmux
 // session with ccc metadata tags.
 func BuildCreateCommand(name, path, projectKey string) string {
+	qn := shellutil.Quote(name)
 	return fmt.Sprintf(
-		"tmux new-session -d -s %s -c %s \\; set-option -t %s @ccc_project %s \\; set-option -t %s @ccc_path %s",
-		shellutil.Quote(name), shellutil.Quote(path), shellutil.Quote(name), shellutil.Quote(projectKey), shellutil.Quote(name), shellutil.Quote(path),
+		"tmux new-session -d -s %s -c %s \\; set-option -t %s @ccc_project %s \\; set-option -t %s @ccc_path %s \\; set-option -t %s visual-bell off \\; set-option -t %s bell-action any",
+		qn, shellutil.Quote(path), qn, shellutil.Quote(projectKey), qn, shellutil.Quote(path), qn, qn,
 	)
 }
 

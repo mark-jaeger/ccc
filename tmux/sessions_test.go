@@ -130,7 +130,7 @@ func TestParseEmptyOutput(t *testing.T) {
 func TestBuildCreateCommand(t *testing.T) {
 	cmd := BuildCreateCommand("rt1", "/home/user/proj", "rt1")
 
-	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj'"
+	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' visual-bell off \\; set-option -t 'rt1' bell-action any"
 	if cmd != expected {
 		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
