@@ -88,9 +88,9 @@ func BuildKillCommand(name string) string {
 }
 
 // BuildDetachClientsCommand returns a shell command to detach all clients
-// from a named session.
+// attached to the named session.
 func BuildDetachClientsCommand(name string) string {
-	return fmt.Sprintf("tmux detach-client -t %s -a", shellutil.Quote(name))
+	return fmt.Sprintf("tmux detach-client -s %s", shellutil.Quote(name))
 }
 
 // BuildCheckTmuxCommand returns a shell command to check if tmux is installed.

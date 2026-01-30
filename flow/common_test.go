@@ -394,15 +394,13 @@ func TestAttachSessionUnverifiedDeclined(t *testing.T) {
 	}
 }
 
-func TestSessionFlowDetach(t *testing.T) {
+func TestSessionFlowDetachNoClients(t *testing.T) {
 	runner := newMockRunner()
 	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// Two verified sessions
 	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
 	runner.responses["tmux list-clients"] = ""
-	runner.responses["tmux detach-client"] = ""
 
-	// Detach session 1, then quit from re-displayed menu
+	// Detach session 1 (no clients), then quit
 	in := strings.NewReader("d\n1\nq\n")
 	out := &bytes.Buffer{}
 
@@ -412,12 +410,34 @@ func TestSessionFlowDetach(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "Detached clients from myapp") {
-		t.Errorf("expected detach message, got: %s", output)
+	if !strings.Contains(output, "No clients attached to myapp") {
+		t.Errorf("expected no-clients message, got: %s", output)
 	}
-	// Menu should re-display after detach (showing Sessions header again)
+	// Menu should re-display after detach attempt
 	if strings.Count(output, "Sessions for myapp") < 2 {
 		t.Errorf("expected menu to re-display after detach, got: %s", output)
+	}
+}
+
+func TestSessionFlowDetachWithClients(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["command -v tmux"] = "/usr/bin/tmux"
+	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
+	runner.responses["tmux list-clients"] = "/dev/ttys004: 220x56 0"
+	runner.responses["tmux detach-client"] = ""
+
+	// Detach session 1 (has a client), then quit
+	in := strings.NewReader("d\n1\nq\n")
+	out := &bytes.Buffer{}
+
+	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Detached 1 client(s) from myapp") {
+		t.Errorf("expected detach success message, got: %s", output)
 	}
 }
 
