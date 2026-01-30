@@ -23,19 +23,13 @@ func CheckTmux(in io.Reader, out io.Writer, runner Runner) error {
 	fmt.Fprintf(out, "\n  tmux not found.\n\n")
 	fmt.Fprintf(out, "  Install tmux:\n")
 
-	switch {
-	case strings.Contains(osInfo, "darwin"):
-		fmt.Fprintf(out, "    macOS:   brew install tmux\n")
-	case strings.Contains(osInfo, "linux"):
-		fmt.Fprintf(out, "    Ubuntu:  sudo apt install tmux\n")
-		fmt.Fprintf(out, "    Fedora:  sudo dnf install tmux\n")
-		fmt.Fprintf(out, "    Arch:    sudo pacman -S tmux\n")
-	default:
+	if strings.Contains(osInfo, "darwin") {
+		fmt.Fprintf(out, "    brew install tmux\n")
+	} else {
 		fmt.Fprintf(out, "    macOS:   brew install tmux\n")
 		fmt.Fprintf(out, "    Ubuntu:  sudo apt install tmux\n")
 		fmt.Fprintf(out, "    Fedora:  sudo dnf install tmux\n")
 		fmt.Fprintf(out, "    Arch:    sudo pacman -S tmux\n")
-		fmt.Fprintf(out, "    Windows: Not supported (use WSL)\n")
 	}
 
 	fmt.Fprintf(out, "\n  Opening shell so you can install it...\n")

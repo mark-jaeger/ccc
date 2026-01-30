@@ -42,13 +42,12 @@ func GenerateKey(sshDir string) (string, error) {
 // ssh-copy-id first; if that binary is not available or fails, it falls
 // back to a manual cat|ssh pipeline.
 func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
+	target := user + "@" + address
+
 	// Try ssh-copy-id first.
 	if copyIDPath, err := exec.LookPath("ssh-copy-id"); err == nil {
-		args := []string{}
-		if port != 0 {
-			args = append(args, "-p", strconv.Itoa(port))
-		}
-		args = append(args, "-i", pubKeyPath, user+"@"+address)
+		args := portArgs(port)
+		args = append(args, "-i", pubKeyPath, target)
 
 		cmd := exec.Command(copyIDPath, args...)
 		cmd.Stdin = os.Stdin
@@ -65,11 +64,8 @@ func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
 		return fmt.Errorf("reading public key: %w", err)
 	}
 
-	args := []string{}
-	if port != 0 {
-		args = append(args, "-p", strconv.Itoa(port))
-	}
-	args = append(args, user+"@"+address,
+	args := portArgs(port)
+	args = append(args, target,
 		"umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys")
 
 	cmd := exec.Command("ssh", args...)
@@ -78,6 +74,14 @@ func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ssh key copy fallback failed: %w", err)
+	}
+	return nil
+}
+
+// portArgs returns ["-p", "<port>"] if port is non-zero, or nil.
+func portArgs(port int) []string {
+	if port != 0 {
+		return []string{"-p", strconv.Itoa(port)}
 	}
 	return nil
 }

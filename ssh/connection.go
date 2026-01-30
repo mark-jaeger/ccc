@@ -45,8 +45,8 @@ func (c *Connection) commonArgs() []string {
 }
 
 // buildNonInteractiveArgs constructs the ssh argument list for non-interactive
-// command execution. It enables BatchMode, accepts new host keys, sets a
-// connect timeout, and wraps the remote command in bash -lc.
+// command execution. It enables BatchMode, accepts new host keys, and sets a
+// connect timeout.
 func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
 	args = append(args,
@@ -54,16 +54,19 @@ func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
 	)
-	args = append(args, c.target())
-	args = append(args, "bash -lc "+shellutil.Quote(cmd))
-	return args
+	return c.appendRemoteCmd(args, cmd)
 }
 
 // buildInteractiveArgs constructs the ssh argument list for interactive command
-// execution. It requests a PTY with -t and wraps the remote command in bash -lc.
+// execution with PTY allocation.
 func (c *Connection) buildInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
 	args = append(args, "-t")
+	return c.appendRemoteCmd(args, cmd)
+}
+
+// appendRemoteCmd adds the target and shell-quoted remote command to args.
+func (c *Connection) appendRemoteCmd(args []string, cmd string) []string {
 	args = append(args, c.target())
 	args = append(args, "bash -lc "+shellutil.Quote(cmd))
 	return args
