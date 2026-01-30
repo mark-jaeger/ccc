@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -129,7 +130,7 @@ func TestParseEmptyOutput(t *testing.T) {
 func TestBuildCreateCommand(t *testing.T) {
 	cmd := BuildCreateCommand("rt1", "/home/user/proj", "rt1")
 
-	expected := "tmux new-session -d -s rt1 -c /home/user/proj \\; set-option -t rt1 @ccc_project rt1 \\; set-option -t rt1 @ccc_path /home/user/proj"
+	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj'"
 	if cmd != expected {
 		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
@@ -138,9 +139,18 @@ func TestBuildCreateCommand(t *testing.T) {
 func TestBuildAttachCommand(t *testing.T) {
 	cmd := BuildAttachCommand("rt1")
 
-	expected := "tmux attach -t rt1"
+	expected := "tmux attach -t 'rt1'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
+	}
+}
+
+func TestBuildCreateCommandWithSpaces(t *testing.T) {
+	cmd := BuildCreateCommand("my-project", "/Users/mark/My Project", "my-project")
+
+	// Verify the path is properly quoted
+	if !strings.Contains(cmd, "'/Users/mark/My Project'") {
+		t.Errorf("path with spaces not properly quoted in: %s", cmd)
 	}
 }
 

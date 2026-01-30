@@ -160,7 +160,10 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 		fmt.Fprintf(out, "  Unknown project: %s\n", projectKey)
 	}
 
-	return ProjectFlow(in, out, runner, projects)
+	scanFn := func(in io.Reader, out io.Writer) (*config.ProjectsConfig, error) {
+		return RunScanFlow(in, out, conn, hostName)
+	}
+	return ProjectFlow(in, out, runner, projects, scanFn)
 }
 
 func runFirstTimeSetup(in io.Reader, out io.Writer, cfgPath string) error {
@@ -177,5 +180,8 @@ func runRemoteScan(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostNam
 		return err
 	}
 	runner := &SSHRunner{Conn: conn}
-	return ProjectFlow(in, out, runner, projects)
+	scanFn := func(in io.Reader, out io.Writer) (*config.ProjectsConfig, error) {
+		return RunScanFlow(in, out, conn, hostName)
+	}
+	return ProjectFlow(in, out, runner, projects, scanFn)
 }

@@ -48,6 +48,9 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.Hosts == nil {
+		cfg.Hosts = make(map[string]Host)
+	}
 	return &cfg, nil
 }
 
@@ -55,7 +58,7 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 // It creates parent directories as needed and sets file permissions to 0600.
 func SaveClientConfig(path string, cfg *ClientConfig) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/markjd/ccc/config"
+	"github.com/markjd/ccc/internal/shellutil"
 	"github.com/markjd/ccc/tmux"
 	"github.com/markjd/ccc/ui"
 )
@@ -17,45 +18,75 @@ type Runner interface {
 }
 
 // ProjectFlow handles project selection -> session selection -> attach/create.
-func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.ProjectsConfig) error {
-	keys := projects.SortedProjectKeys()
-	if len(keys) == 0 {
-		fmt.Fprintf(out, "\n  No projects configured.\n")
-		return nil
-	}
-
-	items := make([]ui.MenuItem, len(keys))
-	for i, k := range keys {
-		p := projects.Projects[k]
-		items[i] = ui.MenuItem{Key: k, Label: k, Extra: p.Path}
-	}
-
-	result, err := ui.ShowMenu(in, out, ui.MenuConfig{
-		Title:    "Projects",
-		Items:    items,
-		ShowBack: true,
-		ExtraActions: []ui.ExtraAction{
-			{Key: "s", Label: "Scan for projects", Action: "scan"},
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	switch result.Action {
-	case ui.ActionQuit:
-		return nil
-	case ui.ActionBack:
-		return nil
-	case ui.ActionExtra:
-		if result.ExtraKey == "scan" {
-			fmt.Fprintf(out, "\n  Scan not yet implemented in this flow.\n")
+// onScan is an optional callback invoked when the user selects [s] Scan.
+func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.ProjectsConfig, onScan func(io.Reader, io.Writer) (*config.ProjectsConfig, error)) error {
+	for {
+		keys := projects.SortedProjectKeys()
+		if len(keys) == 0 {
+			fmt.Fprintf(out, "\n  No projects configured.\n")
 			return nil
 		}
-	case ui.ActionSelect:
-		return SessionFlow(in, out, runner, result.Selected.Key, projects.Projects[result.Selected.Key].Path)
+
+		items := make([]ui.MenuItem, len(keys))
+		for i, k := range keys {
+			p := projects.Projects[k]
+			items[i] = ui.MenuItem{Key: k, Label: k, Extra: p.Path}
+		}
+
+		result, err := ui.ShowMenu(in, out, ui.MenuConfig{
+			Title:    "Projects",
+			Items:    items,
+			ShowBack: true,
+			ExtraActions: []ui.ExtraAction{
+				{Key: "s", Label: "Scan for projects", Action: "scan"},
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		switch result.Action {
+		case ui.ActionQuit:
+			return nil
+		case ui.ActionBack:
+			return nil
+		case ui.ActionExtra:
+			if result.ExtraKey == "scan" {
+				if onScan == nil {
+					fmt.Fprintf(out, "\n  Scan not available in this mode.\n")
+					continue
+				}
+				newProjects, err := onScan(in, out)
+				if err != nil {
+					return err
+				}
+				if newProjects != nil {
+					projects = newProjects
+				}
+				continue
+			}
+		case ui.ActionSelect:
+			projectKey := result.Selected.Key
+			projectPath := projects.Projects[projectKey].Path
+
+			// Validate project path exists
+			checkCmd := fmt.Sprintf("test -d %s", shellutil.Quote(projectPath))
+			if _, err := runner.Run(checkCmd); err != nil {
+				fmt.Fprintf(out, "\n  Path %s not found.\n", projectPath)
+				answer, confirmErr := ui.Confirm(in, out, "Remove from projects?")
+				if confirmErr != nil {
+					return confirmErr
+				}
+				if answer {
+					delete(projects.Projects, projectKey)
+					fmt.Fprintf(out, "  Removed %s.\n", projectKey)
+				}
+				continue
+			}
+
+			return SessionFlow(in, out, runner, projectKey, projectPath)
+		}
 	}
-	return nil
 }
 
 // SessionFlow handles session listing -> attach or create.
@@ -149,12 +180,13 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Sess
 			Items: []ui.MenuItem{
 				{Key: "attach", Label: fmt.Sprintf("Attach anyway (layout constrained to %dx%d)", c.Width, c.Height)},
 				{Key: "detach", Label: "Detach other client and attach (full resolution)"},
+				{Key: "cancel", Label: "Cancel"},
 			},
 		})
 		if err != nil {
 			return err
 		}
-		if detachResult.Action == ui.ActionQuit {
+		if detachResult.Action == ui.ActionQuit || detachResult.Selected.Key == "cancel" {
 			return nil
 		}
 		if detachResult.Selected.Key == "detach" {

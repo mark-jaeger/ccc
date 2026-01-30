@@ -40,10 +40,3 @@ func TestFindExistingKeyMissing(t *testing.T) {
 		t.Errorf("expected empty string for missing keys, got %s", got)
 	}
 }
-
-func TestBuildCopyKeyCommand(t *testing.T) {
-	cmd := buildCopyKeyFallbackCommand("/home/user/.ssh/id_ed25519.pub", "deploy", "10.0.0.1")
-	if cmd == "" {
-		t.Error("expected non-empty command string")
-	}
-}

@@ -52,7 +52,7 @@ func RunLocalMode(in io.Reader, out io.Writer) error {
 	}
 
 	runner := &LocalRunner{}
-	return ProjectFlow(in, out, runner, projects)
+	return ProjectFlow(in, out, runner, projects, nil)
 }
 
 // IsSSHSession checks if we're running inside an SSH session.

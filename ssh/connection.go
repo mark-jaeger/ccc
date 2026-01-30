@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/markjd/ccc/internal/shellutil"
 )
 
 // Connection holds SSH connection parameters.
@@ -37,9 +39,7 @@ func (c *Connection) commonArgs() []string {
 	if c.ProxyJump != "" {
 		args = append(args, "-J", c.ProxyJump)
 	}
-	for _, opt := range c.SSHOptions {
-		args = append(args, "-o", opt)
-	}
+	args = append(args, c.SSHOptions...)
 
 	return args
 }
@@ -55,7 +55,7 @@ func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 		"-o", "ConnectTimeout=10",
 	)
 	args = append(args, c.target())
-	args = append(args, "bash", "-lc", cmd)
+	args = append(args, "bash -lc "+shellutil.Quote(cmd))
 	return args
 }
 
@@ -65,7 +65,7 @@ func (c *Connection) buildInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
 	args = append(args, "-t")
 	args = append(args, c.target())
-	args = append(args, "bash", "-lc", cmd)
+	args = append(args, "bash -lc "+shellutil.Quote(cmd))
 	return args
 }
 

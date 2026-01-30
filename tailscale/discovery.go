@@ -47,7 +47,7 @@ func ParseTailscaleStatus(output string) []TailscaleHost {
 		hosts = append(hosts, TailscaleHost{
 			IP:   fields[0],
 			Name: fields[1],
-			User: strings.TrimRight(fields[2], "@"),
+			User: strings.TrimSuffix(fields[2], "@"),
 			OS:   fields[3],
 		})
 	}

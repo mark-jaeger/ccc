@@ -81,12 +81,3 @@ func CopyKeyToHost(pubKeyPath, user, address string, port int) error {
 	}
 	return nil
 }
-
-// buildCopyKeyFallbackCommand returns the cat|ssh pipeline string used
-// as a fallback when ssh-copy-id is not available.
-func buildCopyKeyFallbackCommand(pubKeyPath, user, address string) string {
-	return fmt.Sprintf(
-		"cat %s | ssh %s@%s 'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'",
-		pubKeyPath, user, address,
-	)
-}

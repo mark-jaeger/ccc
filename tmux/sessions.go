@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/markjd/ccc/internal/shellutil"
 )
 
 // Session represents a tmux session with optional ccc metadata.
@@ -32,7 +34,7 @@ func BuildListCommand() string {
 
 // BuildListClientsCommand returns a shell command that lists clients for a session.
 func BuildListClientsCommand(session string) string {
-	return fmt.Sprintf("tmux list-clients -t %s -F '%s'", session, clientFormat)
+	return fmt.Sprintf("tmux list-clients -t %s -F '%s'", shellutil.Quote(session), clientFormat)
 }
 
 // BuildCreateCommand returns a shell command that creates a new detached tmux
@@ -40,24 +42,24 @@ func BuildListClientsCommand(session string) string {
 func BuildCreateCommand(name, path, projectKey string) string {
 	return fmt.Sprintf(
 		"tmux new-session -d -s %s -c %s \\; set-option -t %s @ccc_project %s \\; set-option -t %s @ccc_path %s",
-		name, path, name, projectKey, name, path,
+		shellutil.Quote(name), shellutil.Quote(path), shellutil.Quote(name), shellutil.Quote(projectKey), shellutil.Quote(name), shellutil.Quote(path),
 	)
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.
 func BuildAttachCommand(name string) string {
-	return fmt.Sprintf("tmux attach -t %s", name)
+	return fmt.Sprintf("tmux attach -t %s", shellutil.Quote(name))
 }
 
 // BuildKillCommand returns a shell command to kill a named session.
 func BuildKillCommand(name string) string {
-	return fmt.Sprintf("tmux kill-session -t %s", name)
+	return fmt.Sprintf("tmux kill-session -t %s", shellutil.Quote(name))
 }
 
 // BuildDetachClientsCommand returns a shell command to detach all clients
 // from a named session.
 func BuildDetachClientsCommand(name string) string {
-	return fmt.Sprintf("tmux detach-client -t %s -a", name)
+	return fmt.Sprintf("tmux detach-client -t %s -a", shellutil.Quote(name))
 }
 
 // BuildCheckTmuxCommand returns a shell command to check if tmux is installed.

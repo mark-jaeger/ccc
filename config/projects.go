@@ -22,6 +22,9 @@ func ParseProjectsConfig(data []byte) (*ProjectsConfig, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.Projects == nil {
+		cfg.Projects = make(map[string]Project)
+	}
 	return &cfg, nil
 }
 
