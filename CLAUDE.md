@@ -12,7 +12,7 @@ go test ./flow/ -run TestProjectFlowQuit  # Run a single test
 go vet ./...            # Static analysis
 ```
 
-No Makefile or linter config exists. CI runs via GitHub Actions on tag pushes (`.github/workflows/release.yml`), executing tests and GoReleaser. The binary is built with `go build -o ccc .` for local development (gitignored as `ccc` and `ccc-*`). Release builds use GoReleaser (`.goreleaser.yaml`), which injects the version string via `-ldflags '-X main.version=...'`.
+No Makefile or linter config exists. CI runs via GitHub Actions on tag pushes (`.github/workflows/release.yml`), executing tests and GoReleaser on a `macos-latest` runner. The binary is built with `go build -o ccc .` for local development (gitignored as `ccc` and `ccc-*`). Release builds use GoReleaser (`.goreleaser.yaml`), which injects the version string via `-ldflags '-X main.version=...'`. macOS binaries are code-signed and notarized via GoReleaser's native `notarize` block, using secrets configured in the GitHub repository; signing is skipped for local and snapshot builds via an `isEnvSet` guard.
 
 ## Architecture
 
