@@ -4,14 +4,22 @@ A CLI tool for managing tmux sessions on remote machines over SSH. Navigate to a
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
 ```bash
-go install github.com/mark-jaeger/ccc@latest
+brew install mark-jaeger/tap/ccc
 ```
 
-Or build from source:
+### Download binary
+
+Grab the latest release from [GitHub Releases](https://github.com/mark-jaeger/ccc/releases) and put it in your PATH.
+
+### Build from source
+
+Requires Go 1.25+:
 
 ```bash
-go build -o ccc .
+go install github.com/mark-jaeger/ccc@latest
 ```
 
 ## Usage
@@ -101,7 +109,6 @@ On first run with no config, ccc walks you through:
 
 ## Requirements
 
-- Go 1.25+ (build only)
 - SSH client on the local machine
 - tmux on the remote host (ccc will prompt you to install it if missing)
 - No installation needed on the remote host
