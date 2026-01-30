@@ -77,6 +77,21 @@ func BuildSetPassthroughCommand(name string) string {
 	return fmt.Sprintf("tmux set-window-option -t %s allow-passthrough on", shellutil.Quote(name))
 }
 
+// BuildEnsureNotifyOptionsCommand returns a shell command that sets bell and
+// passthrough options on an existing session. This is idempotent and safe to
+// call on every attach so that sessions created by older ccc versions get the
+// correct options. The allow-passthrough part is appended with "2>/dev/null"
+// so it silently fails on tmux < 3.3.
+func BuildEnsureNotifyOptionsCommand(name string) string {
+	qn := shellutil.Quote(name)
+	return fmt.Sprintf(
+		"tmux set-option -t %s bell-action any"+
+			" \\; set-window-option -t %s visual-bell off"+
+			" 2>/dev/null; tmux set-window-option -t %s allow-passthrough on 2>/dev/null; true",
+		qn, qn, qn,
+	)
+}
+
 // BuildAttachCommand returns a shell command to attach to a named session.
 func BuildAttachCommand(name string) string {
 	return fmt.Sprintf("tmux attach -t %s", shellutil.Quote(name))
