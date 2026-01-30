@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/markjd/ccc/tmux"
+	"github.com/mark-jaeger/ccc/tmux"
 )
 
 // CheckTmux verifies tmux is available. If not, shows install instructions

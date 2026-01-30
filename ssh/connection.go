@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/markjd/ccc/config"
-	"github.com/markjd/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
 // ConnectionFromHost creates a Connection from a config.Host, copying all

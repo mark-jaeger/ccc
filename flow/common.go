@@ -7,10 +7,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/markjd/ccc/config"
-	"github.com/markjd/ccc/internal/shellutil"
-	"github.com/markjd/ccc/tmux"
-	"github.com/markjd/ccc/ui"
+	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/tmux"
+	"github.com/mark-jaeger/ccc/ui"
 )
 
 // Runner abstracts command execution (SSH or local).

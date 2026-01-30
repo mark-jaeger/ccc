@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/markjd/ccc/config"
-	"github.com/markjd/ccc/internal/shellutil"
-	sshpkg "github.com/markjd/ccc/ssh"
-	"github.com/markjd/ccc/ui"
+	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
+	sshpkg "github.com/mark-jaeger/ccc/ssh"
+	"github.com/mark-jaeger/ccc/ui"
 )
 
 // RunRemoteMode runs ccc in remote mode (SSH to host).

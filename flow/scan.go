@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/markjd/ccc/config"
-	"github.com/markjd/ccc/internal/shellutil"
-	"github.com/markjd/ccc/scan"
-	sshpkg "github.com/markjd/ccc/ssh"
-	"github.com/markjd/ccc/ui"
+	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/scan"
+	sshpkg "github.com/mark-jaeger/ccc/ssh"
+	"github.com/mark-jaeger/ccc/ui"
 )
 
 // RunScanFlow discovers projects on a host and saves projects.toml.

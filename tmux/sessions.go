@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/markjd/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
 // Session represents a tmux session with optional ccc metadata.

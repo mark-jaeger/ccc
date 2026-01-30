@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/markjd/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
 // ScanResult represents a discovered project directory.
