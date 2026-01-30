@@ -60,6 +60,11 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 
 // SessionFlow handles session listing -> attach or create.
 func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string) error {
+	// Check tmux is available
+	if err := CheckTmux(in, out, runner); err != nil {
+		return err
+	}
+
 	// List sessions
 	listCmd := tmux.BuildListCommand()
 	listOutput, err := runner.Run(listCmd)
