@@ -6,8 +6,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // Action represents the type of action returned from a menu interaction.
@@ -31,9 +34,10 @@ type MenuItem struct {
 // ExtraAction represents an additional action available in the menu
 // beyond standard select/quit/back/remove.
 type ExtraAction struct {
-	Key   string // single char like "a", "s", "n"
-	Label string // display text
-	ID    string // returned in MenuResult.ExtraKey
+	Key        string // single char like "a", "s", "n"
+	Label      string // display text
+	ID         string // returned in MenuResult.ExtraKey
+	ItemAction bool   // if true, action applies to highlighted/selected item
 }
 
 // MenuConfig holds the configuration for displaying a menu.
@@ -53,10 +57,20 @@ type MenuResult struct {
 	ExtraKey string // which extra action was chosen
 }
 
-// ShowMenu displays a numbered menu and handles user input.
-// It loops until the user makes a valid selection.
-// All I/O goes through in/out for testability.
+// ShowMenu displays an interactive menu. When in/out are connected to a
+// terminal it shows an arrow-key navigable cursor menu. Otherwise it falls
+// back to a numbered line-based menu for pipes, tests, and non-TTY contexts.
 func ShowMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
+	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		if outF, ok := out.(*os.File); ok {
+			return showInteractiveMenu(f, outF, cfg)
+		}
+	}
+	return showLineMenu(in, out, cfg)
+}
+
+// showLineMenu is the line-based fallback used when stdin is not a terminal.
+func showLineMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
 	scanner := bufio.NewScanner(in)
 	prompt := cfg.Prompt
 	if prompt == "" {
@@ -115,6 +129,16 @@ func ShowMenu(in io.Reader, out io.Writer, cfg MenuConfig) (MenuResult, error) {
 
 		for _, ea := range cfg.ExtraActions {
 			if input == ea.Key {
+				if ea.ItemAction {
+					result, ok, err := handleItemAction(scanner, out, cfg, ea)
+					if err != nil {
+						return MenuResult{Action: ActionQuit}, err
+					}
+					if !ok {
+						continue
+					}
+					return result, nil
+				}
 				return MenuResult{Action: ActionExtra, ExtraKey: ea.ID}, nil
 			}
 		}
@@ -153,6 +177,22 @@ func handleRemove(scanner *bufio.Scanner, out io.Writer, cfg MenuConfig) (MenuRe
 		return MenuResult{}, false, nil
 	}
 	return MenuResult{Action: ActionRemove, Selected: item}, true, nil
+}
+
+// handleItemAction manages the flow for an item-targeted extra action:
+// pick item number, then return a result with both ExtraKey and Selected set.
+func handleItemAction(scanner *bufio.Scanner, out io.Writer, cfg MenuConfig, ea ExtraAction) (MenuResult, bool, error) {
+	fmt.Fprintf(out, "  Select item: ")
+	if !scanner.Scan() {
+		return MenuResult{}, false, scanner.Err()
+	}
+	input := strings.TrimSpace(scanner.Text())
+	num, err := strconv.Atoi(input)
+	if err != nil || num < 1 || num > len(cfg.Items) {
+		fmt.Fprintf(out, "  Invalid selection.\n")
+		return MenuResult{}, false, nil
+	}
+	return MenuResult{Action: ActionExtra, ExtraKey: ea.ID, Selected: cfg.Items[num-1]}, true, nil
 }
 
 // Prompt asks a simple question and returns the trimmed answer.

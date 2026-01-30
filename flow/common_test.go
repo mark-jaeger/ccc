@@ -394,6 +394,33 @@ func TestAttachSessionUnverifiedDeclined(t *testing.T) {
 	}
 }
 
+func TestSessionFlowDetach(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["command -v tmux"] = "/usr/bin/tmux"
+	// Two verified sessions
+	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
+	runner.responses["tmux list-clients"] = ""
+	runner.responses["tmux detach-client"] = ""
+
+	// Detach session 1, then quit from re-displayed menu
+	in := strings.NewReader("d\n1\nq\n")
+	out := &bytes.Buffer{}
+
+	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Detached clients from myapp") {
+		t.Errorf("expected detach message, got: %s", output)
+	}
+	// Menu should re-display after detach (showing Sessions header again)
+	if strings.Count(output, "Sessions for myapp") < 2 {
+		t.Errorf("expected menu to re-display after detach, got: %s", output)
+	}
+}
+
 func TestProjectFlowPathNotFoundShowsMessage(t *testing.T) {
 	runner := newMockRunner()
 	runner.errors["test -d"] = fmt.Errorf("exit 1")

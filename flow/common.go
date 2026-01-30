@@ -104,59 +104,66 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		return err
 	}
 
-	listCmd := tmux.BuildListCommand()
-	listOutput, err := runner.Run(listCmd)
-	if err != nil {
-		// Could be "no server" — treat as zero sessions
-		listOutput = ""
-	}
-
-	allSessions := tmux.ParseSessionList(listOutput)
-	sessions := tmux.FilterSessionsForProject(allSessions, projectKey)
-
-	// Auto-skip: zero sessions -> create
-	if len(sessions) == 0 {
-		return createSession(in, out, runner, projectKey, projectPath, sessions)
-	}
-
-	// Show session menu
-	items := make([]ui.MenuItem, len(sessions))
-	for i, s := range sessions {
-		extra := fmt.Sprintf("(%d windows)", s.Windows)
-		if !s.Verified {
-			extra += " (unverified)"
+	for {
+		listCmd := tmux.BuildListCommand()
+		listOutput, err := runner.Run(listCmd)
+		if err != nil {
+			// Could be "no server" — treat as zero sessions
+			listOutput = ""
 		}
-		items[i] = ui.MenuItem{Key: s.Name, Label: s.Name, Extra: extra}
-	}
 
-	result, err := ui.ShowMenu(in, out, ui.MenuConfig{
-		Title:      fmt.Sprintf("Sessions for %s", projectKey),
-		Items:      items,
-		ShowBack:   true,
-		ShowRemove: true,
-		ExtraActions: []ui.ExtraAction{
-			{Key: "n", Label: "New session", ID: "new"},
-		},
-	})
-	if err != nil {
-		return err
-	}
+		allSessions := tmux.ParseSessionList(listOutput)
+		sessions := tmux.FilterSessionsForProject(allSessions, projectKey)
 
-	switch result.Action {
-	case ui.ActionQuit, ui.ActionBack:
-		return nil
-	case ui.ActionExtra:
-		return createSession(in, out, runner, projectKey, projectPath, sessions)
-	case ui.ActionRemove:
-		return removeSession(in, out, runner, result.Selected, sessions)
-	case ui.ActionSelect:
-		for _, s := range sessions {
-			if s.Name == result.Selected.Key {
-				return attachSession(in, out, runner, s)
+		// Auto-skip: zero sessions -> create
+		if len(sessions) == 0 {
+			return createSession(in, out, runner, projectKey, projectPath, sessions)
+		}
+
+		// Show session menu
+		items := make([]ui.MenuItem, len(sessions))
+		for i, s := range sessions {
+			extra := fmt.Sprintf("(%d windows)", s.Windows)
+			if !s.Verified {
+				extra += " (unverified)"
+			}
+			items[i] = ui.MenuItem{Key: s.Name, Label: s.Name, Extra: extra}
+		}
+
+		result, err := ui.ShowMenu(in, out, ui.MenuConfig{
+			Title:      fmt.Sprintf("Sessions for %s", projectKey),
+			Items:      items,
+			ShowBack:   true,
+			ShowRemove: true,
+			ExtraActions: []ui.ExtraAction{
+				{Key: "d", Label: "Detach clients", ID: "detach", ItemAction: true},
+				{Key: "n", Label: "New session", ID: "new"},
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		switch result.Action {
+		case ui.ActionQuit, ui.ActionBack:
+			return nil
+		case ui.ActionExtra:
+			if result.ExtraKey == "detach" {
+				detachSessionClients(out, runner, result.Selected)
+				continue
+			}
+			return createSession(in, out, runner, projectKey, projectPath, sessions)
+		case ui.ActionRemove:
+			return removeSession(in, out, runner, result.Selected, sessions)
+		case ui.ActionSelect:
+			for _, s := range sessions {
+				if s.Name == result.Selected.Key {
+					return attachSession(in, out, runner, s)
+				}
 			}
 		}
+		return nil
 	}
-	return nil
 }
 
 func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Session) error {
@@ -221,13 +228,19 @@ func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, proje
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Allow terminal escape sequences to pass through tmux (tmux 3.3+).
-	// Enables notifications from tools like Claude Code to reach the outer terminal.
-	// Silently ignored on older tmux versions.
+	// Enable passthrough for notifications (tmux >= 3.3, ignore errors on older).
 	runner.Run(tmux.BuildSetPassthroughCommand(name))
 
 	fmt.Fprintf(out, "  \u2713 Created session %s\n", name)
 	return runner.RunInteractive(tmux.BuildAttachCommand(name))
+}
+
+func detachSessionClients(out io.Writer, runner Runner, item ui.MenuItem) {
+	if _, err := runner.Run(tmux.BuildDetachClientsCommand(item.Key)); err != nil {
+		fmt.Fprintf(out, "  Warning: could not detach clients: %v\n", err)
+	} else {
+		fmt.Fprintf(out, "  Detached clients from %s.\n", item.Key)
+	}
 }
 
 func removeSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {

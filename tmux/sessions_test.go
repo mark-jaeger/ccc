@@ -130,7 +130,7 @@ func TestParseEmptyOutput(t *testing.T) {
 func TestBuildCreateCommand(t *testing.T) {
 	cmd := BuildCreateCommand("rt1", "/home/user/proj", "rt1")
 
-	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' visual-bell off \\; set-option -t 'rt1' bell-action any"
+	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' bell-action any \\; set-window-option -t 'rt1' visual-bell off"
 	if cmd != expected {
 		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
@@ -151,6 +151,14 @@ func TestBuildCreateCommandWithSpaces(t *testing.T) {
 	// Verify the path is properly quoted
 	if !strings.Contains(cmd, "'/Users/mark/My Project'") {
 		t.Errorf("path with spaces not properly quoted in: %s", cmd)
+	}
+}
+
+func TestBuildSetPassthroughCommand(t *testing.T) {
+	cmd := BuildSetPassthroughCommand("rt1")
+	expected := "tmux set-window-option -t 'rt1' allow-passthrough on"
+	if cmd != expected {
+		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
 }
 
