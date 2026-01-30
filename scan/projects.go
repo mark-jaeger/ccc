@@ -73,7 +73,7 @@ func buildFdCommand(homeDir string) string {
 // submodules). Common noise directories are excluded.
 func buildFindCommand(homeDir string) string {
 	return fmt.Sprintf(
-		`find %s -maxdepth 4 -name .git \( -type d -o -type f \) -not -path '*/node_modules/*' -not -path '*/Library/*' -not -path '*/.cache/*' -not -path '*/.Trash/*'`,
+		`find %s -maxdepth 4 -name .git \( -type d -o -type f \) -not -path '*/node_modules/*' -not -path '*/Library/*' -not -path '*/.cache/*' -not -path '*/.Trash/*' 2>/dev/null || true`,
 		shellutil.Quote(homeDir),
 	)
 }
