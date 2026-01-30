@@ -8,8 +8,16 @@ import (
 	"github.com/mark-jaeger/ccc/flow"
 )
 
+// version is set at build time via ldflags; defaults to "dev" for local builds.
+var version = "dev"
+
 func main() {
 	args := os.Args[1:]
+
+	if len(args) > 0 && (args[0] == "-v" || args[0] == "--version") {
+		fmt.Println("ccc", version)
+		return
+	}
 
 	isLocal := len(args) > 0 && args[0] == "local"
 	if isLocal {

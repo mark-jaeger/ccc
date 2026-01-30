@@ -12,7 +12,7 @@ go test ./flow/ -run TestProjectFlowQuit  # Run a single test
 go vet ./...            # Static analysis
 ```
 
-No Makefile, linter config, or CI pipeline exists. The binary is built with `go build -o ccc .` (gitignored as `ccc` and `ccc-*`).
+No Makefile or linter config exists. CI runs via GitHub Actions on tag pushes (`.github/workflows/release.yml`), executing tests and GoReleaser. The binary is built with `go build -o ccc .` for local development (gitignored as `ccc` and `ccc-*`). Release builds use GoReleaser (`.goreleaser.yaml`), which injects the version string via `-ldflags '-X main.version=...'`.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ Implementations: `ssh.Connection` (remote) and `flow.LocalRunner` (local). All t
 
 ### Control Flow
 
-`main.go` → mode detection → `RunRemoteMode` or `RunLocalMode` → `ProjectFlow` (project menu loop) → `SessionFlow` (session menu loop) → tmux attach/create.
+`main.go` → version flag check → mode detection → `RunRemoteMode` or `RunLocalMode` → `ProjectFlow` (project menu loop) → `SessionFlow` (session menu loop) → tmux attach/create.
 
 Remote mode adds: host config loading → host selection loop → SSH connection → project config read from host.
 
