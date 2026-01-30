@@ -228,11 +228,6 @@ func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, proje
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Allow terminal escape sequences to pass through tmux (tmux 3.3+).
-	// Enables notifications from tools like Claude Code to reach the outer terminal.
-	// Silently ignored on older tmux versions.
-	runner.Run(tmux.BuildSetPassthroughCommand(name))
-
 	fmt.Fprintf(out, "  \u2713 Created session %s\n", name)
 	return runner.RunInteractive(tmux.BuildAttachCommand(name))
 }
