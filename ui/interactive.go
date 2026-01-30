@@ -69,7 +69,7 @@ func showInteractiveMenu(inFile, outFile *os.File, cfg MenuConfig) (MenuResult, 
 				return MenuResult{Action: ActionBack}, nil
 			}
 			if lower == 'r' && cfg.ShowRemove && len(cfg.Items) > 0 {
-				confirmed, err := confirmRemove(inFile, outFile, cfg, cursor, totalLines, actionBar)
+				confirmed, err := confirmRemove(inFile, outFile, cfg.Items[cursor].Label)
 				if err != nil {
 					clearMenu(outFile, totalLines)
 					return MenuResult{Action: ActionQuit}, err
@@ -105,37 +105,28 @@ func showInteractiveMenu(inFile, outFile *os.File, cfg MenuConfig) (MenuResult, 
 }
 
 // renderMenu draws the complete menu and returns the number of lines written.
+// Layout: blank + title + items + blank + action bar.
 func renderMenu(out *os.File, cfg MenuConfig, cursor int, actionBar string) int {
-	lines := 0
-
-	// Title (blank line + title)
-	fmt.Fprintf(out, "\x1b[2K\r\n")
-	lines++
-	fmt.Fprintf(out, "\x1b[2K\r  %s\n", cfg.Title)
-	lines++
+	// Title
+	fmt.Fprintf(out, "\x1b[2K\r\n\x1b[2K\r  %s\n", cfg.Title)
 
 	// Items
 	for i, item := range cfg.Items {
-		fmt.Fprint(out, "\x1b[2K\r")
 		label := item.Label
 		if item.Extra != "" {
 			label += "  " + item.Extra
 		}
 		if i == cursor {
-			fmt.Fprintf(out, "  \x1b[7m> %s\x1b[0m\n", label)
+			fmt.Fprintf(out, "\x1b[2K\r  \x1b[7m> %s\x1b[0m\n", label)
 		} else {
-			fmt.Fprintf(out, "    %s\n", label)
+			fmt.Fprintf(out, "\x1b[2K\r    %s\n", label)
 		}
-		lines++
 	}
 
-	// Action bar (blank line + bar)
-	fmt.Fprintf(out, "\x1b[2K\r\n")
-	lines++
-	fmt.Fprintf(out, "\x1b[2K\r  %s", actionBar)
-	lines++
+	// Action bar
+	fmt.Fprintf(out, "\x1b[2K\r\n\x1b[2K\r  %s", actionBar)
 
-	return lines
+	return len(cfg.Items) + 4 // blank + title + items + blank + bar
 }
 
 // buildActionBar constructs the bottom action bar string from the menu config.
@@ -171,11 +162,8 @@ func clearMenu(out *os.File, totalLines int) {
 
 // confirmRemove shows an inline confirmation prompt for removing the highlighted item.
 // Returns true if confirmed, false if declined.
-func confirmRemove(inFile, outFile *os.File, cfg MenuConfig, cursor, totalLines int, actionBar string) (bool, error) {
-	item := cfg.Items[cursor]
-
-	// Overwrite the action bar with the confirmation prompt
-	fmt.Fprintf(outFile, "\x1b[2K\r  Remove %s? [y/n] ", item.Label)
+func confirmRemove(inFile, outFile *os.File, label string) (bool, error) {
+	fmt.Fprintf(outFile, "\x1b[2K\r  Remove %s? [y/n] ", label)
 
 	for {
 		evt, ch := readKey(inFile)

@@ -68,15 +68,6 @@ func BuildCreateCommand(name, path, projectKey string) string {
 	)
 }
 
-// BuildSetPassthroughCommand returns a shell command to enable escape sequence
-// passthrough for a session. Requires tmux 3.3+; fails silently on older versions.
-//
-// Deprecated: passthrough is now set in BuildCreateCommand. Retained for
-// sessions created before this change.
-func BuildSetPassthroughCommand(name string) string {
-	return fmt.Sprintf("tmux set-window-option -t %s allow-passthrough on", shellutil.Quote(name))
-}
-
 // BuildAttachCommand returns a shell command to attach to a named session.
 func BuildAttachCommand(name string) string {
 	return fmt.Sprintf("tmux attach -t %s", shellutil.Quote(name))
