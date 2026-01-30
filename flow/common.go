@@ -119,11 +119,6 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		return createSession(in, out, runner, projectKey, projectPath, sessions)
 	}
 
-	// Auto-skip: one session -> attach
-	if len(sessions) == 1 {
-		return attachSession(in, out, runner, sessions[0])
-	}
-
 	// Show session menu
 	items := make([]ui.MenuItem, len(sessions))
 	for i, s := range sessions {

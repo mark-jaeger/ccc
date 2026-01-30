@@ -182,7 +182,7 @@ func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 	}
 }
 
-func TestSessionFlowOneSessionAutoAttaches(t *testing.T) {
+func TestSessionFlowOneSessionShowsMenu(t *testing.T) {
 	runner := newMockRunner()
 	runner.responses["command -v tmux"] = "/usr/bin/tmux"
 	// One verified session
@@ -190,7 +190,8 @@ func TestSessionFlowOneSessionAutoAttaches(t *testing.T) {
 	// No other clients
 	runner.responses["tmux list-clients"] = ""
 
-	in := strings.NewReader("")
+	// Select session 1 from menu
+	in := strings.NewReader("1\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -346,7 +347,8 @@ func TestAttachSessionVerifiedNoClients(t *testing.T) {
 	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2"
 	runner.responses["tmux list-clients"] = ""
 
-	in := strings.NewReader("")
+	// Select session 1 from menu
+	in := strings.NewReader("1\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -375,8 +377,8 @@ func TestAttachSessionUnverifiedDeclined(t *testing.T) {
 	runner.responses["tmux list-sessions"] = "myapp||||||/tmp|||1"
 	runner.responses["tmux list-clients"] = ""
 
-	// User declines unverified session
-	in := strings.NewReader("n\n")
+	// Select session 1, then decline unverified prompt
+	in := strings.NewReader("1\nn\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
