@@ -96,8 +96,11 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 			fmt.Fprintf(out, "  ✓ Removed %s\n", result.Selected.Key)
 			continue
 		case ui.ActionExtra:
-			// Add host flow — stub for now, Task 12 will implement
-			fmt.Fprintf(out, "\n  Add host: not yet fully implemented.\n")
+			if err := AddHostFlow(in, out, cfg, cfgPath); err != nil {
+				fmt.Fprintf(out, "  %v\n", err)
+			}
+			// Reload config
+			cfg, _ = config.LoadClientConfig(cfgPath)
 			continue
 		case ui.ActionSelect:
 			if err := connectToHost(in, out, cfg, result.Selected.Key, nil); err != nil {
@@ -161,10 +164,11 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 }
 
 func runFirstTimeSetup(in io.Reader, out io.Writer, cfgPath string) error {
-	fmt.Fprintf(out, "\n  No config found. Let's set up your first host.\n")
-	// TODO: Tailscale discovery, manual entry, save config (Task 12)
-	fmt.Fprintf(out, "  First-time setup not yet fully implemented.\n")
-	return nil
+	cfg, err := SetupFirstHost(in, out, cfgPath)
+	if err != nil {
+		return err
+	}
+	return hostSelectionLoop(in, out, cfg, cfgPath, nil)
 }
 
 func runRemoteScan(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostName string) error {
