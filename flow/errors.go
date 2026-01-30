@@ -33,7 +33,7 @@ func CheckTmux(in io.Reader, out io.Writer, runner Runner) error {
 	}
 
 	fmt.Fprintf(out, "\n  Opening shell so you can install it...\n")
-	if err := runner.RunInteractive("bash -l"); err != nil {
+	if err := runner.RunInteractive("$SHELL -l"); err != nil {
 		return fmt.Errorf("shell failed: %w", err)
 	}
 

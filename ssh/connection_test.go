@@ -35,10 +35,10 @@ func TestBuildNonInteractiveArgs(t *testing.T) {
 		t.Errorf("expected deploy@10.0.0.1 in args, got %v", args)
 	}
 
-	// Must wrap command in bash -lc as a single quoted argument
+	// Must wrap command in $SHELL -lc as a single quoted argument
 	lastArg := args[len(args)-1]
-	if lastArg != "bash -lc 'uptime'" {
-		t.Errorf("expected last arg to be %q, got %q", "bash -lc 'uptime'", lastArg)
+	if lastArg != "$SHELL -lc 'uptime'" {
+		t.Errorf("expected last arg to be %q, got %q", "$SHELL -lc 'uptime'", lastArg)
 	}
 
 	// Must NOT contain -t (that's interactive only)
@@ -70,10 +70,10 @@ func TestBuildInteractiveArgs(t *testing.T) {
 		t.Errorf("expected deploy@10.0.0.1 in args, got %v", args)
 	}
 
-	// Must contain the command wrapped in bash -lc as single arg
+	// Must contain the command wrapped in $SHELL -lc as single arg
 	lastArg := args[len(args)-1]
-	if lastArg != "bash -lc 'htop'" {
-		t.Errorf("expected last arg to be %q, got %q", "bash -lc 'htop'", lastArg)
+	if lastArg != "$SHELL -lc 'htop'" {
+		t.Errorf("expected last arg to be %q, got %q", "$SHELL -lc 'htop'", lastArg)
 	}
 }
 

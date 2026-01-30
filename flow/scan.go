@@ -55,7 +55,7 @@ func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostN
 
 	if result.Selected.Key == "shell" {
 		fmt.Fprintf(out, "\n  Opening shell. Type 'exit' when done.\n")
-		conn.RunInteractive("bash -l")
+		conn.RunInteractive("$SHELL -l")
 
 		// Rescan after shell exit
 		fmt.Fprintf(out, "\n  Rescanning...\n")
