@@ -12,7 +12,7 @@ Working on a remote Mac (M1 behind a router) requires a tedious ceremony every t
 
 A single Go binary called `ccc` that hides SSH+tmux plumbing behind interactive numbered menus. Two config files (client-side and host-side), no daemons, no host-side installation beyond tmux.
 
-Works from any client — MacBook, iPhone (Blink), any machine with the binary.
+Works from any client — MacBook, iPhone (Blink via local mode), any machine with the binary.
 
 ## User Flow
 
@@ -23,6 +23,7 @@ $ ccc
   [1] macbook-m1 (mark@100.64.0.1)
   [2] server-lab (mark@100.64.0.2)
   [a] Add host
+  [q] Quit
 
   Select host (or 'r' to remove): 1
 
@@ -31,21 +32,27 @@ $ ccc
   [2] death_and_taxes
   [3] pro-rag
   [s] Scan for projects
+  [b] Back
+  [q] Quit
 
   Select project: 1
 
   Sessions for rt1
-  [1] rt1 (3 windows, created 2h ago)
-  [2] rt1-feature-x (1 window, created 2d ago)
+  [1] rt1 (3 windows)
+  [2] rt1-feature-x (1 window)
   [n] New session
+  [b] Back
+  [q] Quit
 
   Select session (or 'r' to remove): n
-  Session name (enter for "rt1-3"): auth-refactor
+  Session name (enter for "rt1-2"): auth-refactor
 
   Connecting...
 ```
 
-You land in an SSH session attached to tmux session `rt1-auth-refactor`, working directory `~/Projects/jd/rt1`.
+You land in an SSH session attached to tmux session `rt1-auth-refactor`, working directory `/Users/mark/Projects/jd/rt1`.
+
+Every menu has `[b]` back and `[q]` quit for escape hatches.
 
 ### Shortcuts
 
@@ -66,6 +73,31 @@ If any argument is ambiguous or wrong, falls back to the interactive menu at tha
 - Project has zero sessions → skip to creating one.
 - Project has exactly one session → skip to attaching.
 
+## Modes: Remote and Local
+
+### Remote mode (default)
+
+`ccc` runs on a client machine, SSHes into a remote host.
+
+### Local mode
+
+`ccc` detects it's running over SSH (checks `$SSH_CONNECTION` env var) and suggests local mode:
+
+```
+  You're already on this machine via SSH.
+  Switching to local mode (no SSH hop).
+```
+
+Can also be invoked explicitly:
+
+```
+ccc local
+```
+
+Local mode skips host selection entirely. Reads `~/.ccc/projects.toml` directly, manages tmux sessions locally. Same project/session flow, no SSH layer.
+
+This is how iPhone/Blink users work: SSH into the host manually, then run `ccc local` (or just `ccc` and it auto-detects).
+
 ## Config Files
 
 ### Client-side: `~/.ccc/config.toml`
@@ -76,26 +108,41 @@ Lives on whatever machine you run `ccc` from.
 [hosts.macbook-m1]
 user = "mark"
 address = "100.64.0.1"
+# Optional overrides (SSH config takes precedence otherwise):
+# port = 22
+# identity_file = "~/.ssh/id_ed25519"
+# proxy_jump = "bastion"
+# ssh_options = ["-o", "ServerAliveInterval=60"]
 
 [hosts.server-lab]
 user = "mark"
 address = "100.64.0.5"
 ```
 
+Host target can be a raw address or an SSH config alias (e.g., `address = "my-mac"` if you have a `Host my-mac` block in `~/.ssh/config`).
+
+**Precedence:** CLI args > ccc config overrides > SSH config.
+
 ### Host-side: `~/.ccc/projects.toml`
 
 Lives on the remote host.
 
 ```toml
-[projects.rt1]
-path = "~/Projects/jd/rt1"
+[projects]
 
-[projects.death_and_taxes]
-path = "~/Projects/jd/death_and_taxes"
+[projects.rt1]
+path = "/Users/mark/Projects/jd/rt1"
+
+[projects.death-and-taxes]
+path = "/Users/mark/Projects/jd/death_and_taxes"
 
 [projects.pro-rag]
-path = "~/Projects/jd/pro-rag"
+path = "/Users/mark/Projects/jd/pro-rag"
 ```
+
+**Path handling:** All paths are stored as absolute paths. The scan process resolves `~` to absolute paths before writing. This avoids tmux `~` expansion issues (`tmux new-session -c` does not expand `~`).
+
+**TOML key naming:** Project keys are stable identifiers (lowercase, hyphens). The key is used for tmux session naming and must be a valid bare TOML key. Display names can differ from keys (derived from the directory name if needed).
 
 Deliberately minimal. Adding fields later (aliases, default branch, etc.) is trivial since TOML is forward-compatible.
 
@@ -129,7 +176,7 @@ If Tailscale is not installed:
   Address: 192.168.1.50
 ```
 
-The CLI doesn't care how you reach the host — Tailscale IP, local network IP, public IP, hostname. It stores `user@address` and SSHes to it.
+The CLI doesn't care how you reach the host — Tailscale IP, local network IP, public IP, hostname, SSH alias. It stores `user@address` and SSHes to it.
 
 ### SSH key setup
 
@@ -167,7 +214,13 @@ If no key exists:
   ✓ Connected.
 ```
 
-Uses `ssh-keygen` and `ssh-copy-id` under the hood. Happens once per client-host pair.
+Uses `ssh-keygen` for generation. For key installation, tries `ssh-copy-id` first. If not available (common on macOS), falls back to:
+
+```
+cat ~/.ssh/id_ed25519.pub | ssh target 'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys'
+```
+
+Happens once per client-host pair.
 
 ### No host config (no projects)
 
@@ -180,10 +233,10 @@ On first connect to a host with no `~/.ccc/projects.toml`:
   Scanning for git repositories in ~...
 
   Found 4 projects:
-  [1] rt1              ~/Projects/jd/rt1
-  [2] death_and_taxes  ~/Projects/jd/death_and_taxes
-  [3] pro-rag          ~/Projects/jd/pro-rag
-  [4] ccc              ~/Projects/jd/ccc
+  [1] rt1              /Users/mark/Projects/jd/rt1
+  [2] death_and_taxes  /Users/mark/Projects/jd/death_and_taxes
+  [3] pro-rag          /Users/mark/Projects/jd/pro-rag
+  [4] ccc              /Users/mark/Projects/jd/ccc
 
   Select projects to add (comma-separated, or 'a' for all): a
   ✓ Saved 4 projects to ~/.ccc/projects.toml
@@ -198,9 +251,13 @@ Default scan path is `~` (home directory). Uses the fastest available tool:
 | 3 | `fd` | Any | Parallel Rust-based walker, very fast |
 | 4 | `find` | Any Unix | Sequential walk with pruning, universal fallback |
 
-Detection is for `.git` directories — a directory containing `.git` is a project.
+**Scan fallback chain:** If a fast tool (mdfind, locate) returns zero results, automatically falls through to the next tool before declaring "no repos." This handles stale indexes.
 
-If no git repos are found:
+**Detection:** A project is any directory containing a `.git` directory OR a `.git` file (git worktrees use a `.git` file pointing to the main repo). Both are detected.
+
+**Path resolution:** All discovered paths are resolved to absolute paths before writing to `projects.toml`.
+
+If no git repos are found after exhausting all scan tools:
 
 ```
   No git repositories found under ~.
@@ -215,7 +272,7 @@ If no git repos are found:
 
   Rescanning...
   Found 1 project:
-  [1] my-project  ~/my-project
+  [1] my-project  /Users/mark/my-project
 
   Select projects to add (comma-separated, or 'a' for all):
 ```
@@ -224,23 +281,64 @@ The `[s] Scan for projects` option in the project list re-runs this flow anytime
 
 ## How It Works Under the Hood
 
-No daemon, no API, no agent on the host. Everything over SSH.
+No daemon, no API, no agent on the host. Everything over SSH (or local commands in local mode).
+
+### SSH behavior
+
+**Non-interactive commands** (reading config, listing sessions) use:
+- `BatchMode=yes` — prevents hanging on password/MFA prompts.
+- `StrictHostKeyChecking=accept-new` — auto-accepts first-time host keys, but halts and prompts the user explicitly if a known host key changes (potential MITM).
+- Commands are wrapped with a login shell (`bash -lc "..."`) to ensure PATH includes common locations like `/opt/homebrew/bin`.
+
+**Interactive commands** (attaching to tmux, opening a shell) use normal SSH with `-t` for PTY allocation.
 
 ### Three SSH operations
 
 1. **Read host config** — `ssh host "cat ~/.ccc/projects.toml"` — non-interactive, get project list.
-2. **List tmux sessions** — `ssh host "tmux list-sessions -F '#{session_name}'"` — non-interactive, discover running sessions.
+2. **List tmux sessions** — `ssh host "bash -lc 'tmux list-sessions -F ...'"` — non-interactive, discover running sessions.
 3. **Attach or create** — interactive, hands over the terminal:
    - Existing: `ssh -t host "tmux attach -t rt1-feature-x"`
-   - New: `ssh -t host "tmux new-session -s rt1-auth-refactor -c ~/Projects/jd/rt1"`
+   - New: `ssh -t host "tmux new-session -s rt1-auth-refactor -c /Users/mark/Projects/jd/rt1"`
 
 Steps 1 and 2 can be combined into a single SSH call for speed.
 
+### Session identity
+
+Sessions are tagged with tmux user options for reliable project matching:
+
+**On create**, `ccc` sets metadata:
+```
+tmux new-session -s rt1-auth-refactor -c /abs/path \; \
+  set-option -t rt1-auth-refactor @ccc_project rt1 \; \
+  set-option -t rt1-auth-refactor @ccc_path /Users/mark/Projects/jd/rt1
+```
+
+**On list**, `ccc` reads metadata:
+```
+tmux list-sessions -F '#{session_name} #{@ccc_project} #{@ccc_path}'
+```
+
+**Matching priority:**
+1. Sessions with `@ccc_project` matching the project key — reliable, preferred.
+2. Sessions with names prefix-matching the project key — fallback for untagged sessions (e.g., manually created tmux sessions). These are labeled `(unverified)` in the list.
+
+**On kill/attach of unverified sessions**, show a warning:
+```
+  Session "rt1-old" matches by name but wasn't created by ccc.
+  Proceed? (y/n):
+```
+
+This prevents the collision between `rt1` and `rt1-auth` that prefix-only matching would cause.
+
 ### Session naming
 
-- First session for a project: `rt1`
+- First session for a project: project key (e.g., `rt1`)
 - Additional sessions: prompted for a suffix → `rt1-<suffix>`
-- Matching: any tmux session starting with `rt1` or `rt1-` belongs to the rt1 project
+- Default auto-name: `rt1-2`, `rt1-3`, etc. If that name already exists (race with concurrent client), retry with next number.
+
+### tmux "no server" handling
+
+`tmux list-sessions` returns non-zero when no tmux server is running. This is treated as "zero sessions" — not an error. Distinct from tmux not being installed (detected by `which tmux` / `command -v tmux`).
 
 ### Multiple clients on one session
 
@@ -297,6 +395,7 @@ Press `r` at the session list:
 
 - **SSH fails** → `Cannot reach macbook-m1. Check your network or Tailscale.`
 - **SSH auth fails** → SSH key setup flow (see above).
+- **Host key changed** → `WARNING: Host key for macbook-m1 has changed. This could indicate a security issue. Update known host? (y/n)` — explicit user approval required.
 - **Host sleeps mid-session** → tmux keeps the session alive. Next `ccc` call, it's still there.
 
 ### tmux
@@ -322,13 +421,14 @@ Press `r` at the session list:
   Rechecking... ✓ tmux found.
 ```
 
+- **No tmux server running** → treated as zero sessions, not an error. Proceeds to "New session" creation.
 - **Session disappeared between listing and attaching** → `Session rt1-feature-x no longer exists.` Re-shows session list.
 
 ### Config
 
 - **Client config corrupted** → `Config error in ~/.ccc/config.toml: <parse error>. Fix it or delete to start fresh.`
 - **Host config missing** → Triggers scan flow.
-- **Project path no longer exists** → `Path ~/Projects/jd/rt1 not found. Remove from projects? (y/n)`
+- **Project path no longer exists** → `Path /Users/mark/Projects/jd/rt1 not found. Remove from projects? (y/n)`
 
 ## Project Structure
 
@@ -337,26 +437,26 @@ ccc/
 ├── main.go              # Entry point, argument parsing, shortcut routing
 ├── config/
 │   ├── client.go        # Read/write ~/.ccc/config.toml
-│   └── host.go          # Read/write ~/.ccc/projects.toml (over SSH)
+│   └── host.go          # Read/write ~/.ccc/projects.toml (over SSH or local)
 ├── ssh/
-│   ├── connection.go    # SSH connection, command execution
-│   └── keys.go          # Key generation, ssh-copy-id flow
+│   ├── connection.go    # SSH connection, command execution, BatchMode/StrictHostKeyChecking
+│   └── keys.go          # Key generation, ssh-copy-id with fallback
 ├── tmux/
-│   └── sessions.go      # List, create, attach, kill sessions
+│   └── sessions.go      # List, create, attach, kill; metadata tagging (@ccc_project)
 ├── scan/
-│   └── projects.go      # mdfind → locate → fd → find chain
+│   └── projects.go      # mdfind → locate → fd → find chain; .git dir + file detection
 ├── ui/
-│   └── menu.go          # Numbered list selection, confirmation prompts
+│   └── menu.go          # Numbered list selection, confirmation prompts, back/quit
 └── go.mod
 ```
 
 ### Dependencies
 
-Minimal. TOML parser (e.g., `pelletier/go-toml`). Everything else is stdlib + shelling out to `ssh`, `ssh-keygen`, `ssh-copy-id`.
+Minimal. TOML parser (e.g., `pelletier/go-toml`). Everything else is stdlib + shelling out to `ssh`, `ssh-keygen`.
 
 ### UI
 
-Simple numbered lists. Type a number, press enter. Works in every terminal including iPhone apps (Blink). No arrow-key navigation, no TUI frameworks.
+Simple numbered lists. Type a number, press enter. Works in every terminal including iPhone apps (Blink). No arrow-key navigation, no TUI frameworks. Every menu supports `[b]` back and `[q]` quit.
 
 ## What ccc Is Not
 
