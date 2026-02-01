@@ -118,3 +118,60 @@ func TestEnsureNotifyOptions_Idempotent(t *testing.T) {
 		t.Errorf("allow-passthrough = %q, want %q", passthrough, "on")
 	}
 }
+
+func TestFilterSessionsForProject_RealTmux(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	cmd1 := tmux.BuildCreateCommand("proj", "/tmp/proj", "proj")
+	if _, err := tt.Run(cmd1); err != nil {
+		t.Fatalf("create proj failed: %v", err)
+	}
+	cmd2 := tmux.BuildCreateCommand("proj-2", "/tmp/proj", "proj")
+	if _, err := tt.Run(cmd2); err != nil {
+		t.Fatalf("create proj-2 failed: %v", err)
+	}
+	cmd3 := tmux.BuildCreateCommand("other", "/tmp/other", "other")
+	if _, err := tt.Run(cmd3); err != nil {
+		t.Fatalf("create other failed: %v", err)
+	}
+	tt.CreateSession(t, "proj-legacy")
+
+	listCmd := tmux.BuildListCommand()
+	output, err := tt.Run(listCmd)
+	if err != nil {
+		t.Fatalf("list command failed: %v", err)
+	}
+
+	allSessions := tmux.ParseSessionList(output)
+	filtered := tmux.FilterSessionsForProject(allSessions, "proj")
+
+	if len(filtered) != 3 {
+		names := make([]string, len(filtered))
+		for i, s := range filtered {
+			names[i] = s.Name
+		}
+		t.Fatalf("expected 3 filtered sessions, got %d: %v", len(filtered), names)
+	}
+
+	found := map[string]bool{}
+	for _, s := range filtered {
+		found[s.Name] = true
+		switch s.Name {
+		case "proj", "proj-2":
+			if !s.Verified {
+				t.Errorf("%s should be verified", s.Name)
+			}
+		case "proj-legacy":
+			if s.Verified {
+				t.Errorf("proj-legacy should NOT be verified (prefix match)")
+			}
+		}
+	}
+
+	for _, name := range []string{"proj", "proj-2", "proj-legacy"} {
+		if !found[name] {
+			t.Errorf("expected %s in filtered results", name)
+		}
+	}
+}
