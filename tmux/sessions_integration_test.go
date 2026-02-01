@@ -201,6 +201,93 @@ func TestNotifyHooks_OneShotBell(t *testing.T) {
 	}
 }
 
+func TestNotifyHooks_MacOSNotification(t *testing.T) {
+	t.Parallel()
+
+	// Skip on non-macOS or if osascript isn't available.
+	if _, err := exec.LookPath("osascript"); err != nil {
+		t.Skip("osascript not available, skipping macOS notification test")
+	}
+	// Skip if `log` CLI isn't available (needed to verify delivery).
+	if _, err := exec.LookPath("log"); err != nil {
+		t.Skip("log command not available, skipping macOS notification test")
+	}
+
+	tt := testutil.NewTestTmux(t)
+
+	// Create session with full notification setup
+	cmd := tmux.BuildCreateCommand("notiftest", "/tmp", "notiftest")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("create command failed: %v", err)
+	}
+	if _, err := tt.Run(tmux.BuildSetNotifyHooksCommand("notiftest")); err != nil {
+		t.Fatalf("set notify hooks failed: %v", err)
+	}
+	// Short silence timeout for faster test
+	if _, err := tt.Run("tmux set-window-option -t notiftest monitor-silence 2"); err != nil {
+		t.Fatalf("set monitor-silence failed: %v", err)
+	}
+
+	// Attach via PTY so hooks can fire (hooks only fire with a client attached)
+	attachCmd := exec.Command("tmux", "-L", tt.Socket, "attach", "-t", "notiftest")
+	ptmx, err := pty.Start(attachCmd)
+	if err != nil {
+		t.Fatalf("failed to start tmux attach with PTY: %v", err)
+	}
+	t.Cleanup(func() {
+		ptmx.Close()
+		attachCmd.Process.Kill()
+		attachCmd.Wait()
+	})
+
+	// Drain PTY output to prevent blocking
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			if _, err := ptmx.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Generate activity then let the window go silent
+	sendKeys := exec.Command("tmux", "-L", tt.Socket, "send-keys", "-t", "notiftest", "echo activity", "Enter")
+	if out, err := sendKeys.CombinedOutput(); err != nil {
+		t.Fatalf("send-keys failed: %v: %s", err, out)
+	}
+
+	// Wait for silence timeout (2s) + hook execution + notification delivery
+	time.Sleep(6 * time.Second)
+
+	// Check macOS unified log for ScriptEditor2 notification delivery.
+	// osascript posts notifications as com.apple.ScriptEditor2, and
+	// usernoted logs "Delivering" when the notification reaches Notification Center.
+	logOut, err := exec.Command("/usr/bin/log", "show",
+		"--last", "10s",
+		"--predicate", `process == "usernoted" AND composedMessage CONTAINS "ScriptEditor2" AND composedMessage CONTAINS "Delivering"`,
+		"--style", "compact",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("log show failed: %v: %s", err, logOut)
+	}
+
+	// Count actual timestamped log entries (skip header lines)
+	lines := strings.Split(string(logOut), "\n")
+	delivered := 0
+	for _, line := range lines {
+		if len(line) >= 10 && line[4] == '-' && line[7] == '-' {
+			delivered++
+		}
+	}
+
+	if delivered == 0 {
+		t.Errorf("no macOS notification delivery found in system log; hook may not have fired osascript")
+		t.Logf("log output:\n%s", string(logOut))
+	} else {
+		t.Logf("macOS notification delivered: %d delivery log entries", delivered)
+	}
+}
+
 func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
