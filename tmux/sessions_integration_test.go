@@ -48,3 +48,73 @@ func TestCreateSession_SetsBellOptions(t *testing.T) {
 		t.Errorf("visual-bell = %q, want %q", visualBell, "off")
 	}
 }
+
+func TestSetPassthrough_EnablesOption(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	tt.CreateSession(t, "myapp")
+
+	cmd := tmux.BuildSetPassthroughCommand("myapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("set passthrough failed: %v", err)
+	}
+
+	val := tt.GetWindowOption(t, "myapp", "allow-passthrough")
+	if val != "on" {
+		t.Errorf("allow-passthrough = %q, want %q", val, "on")
+	}
+}
+
+func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	tt.CreateSession(t, "oldapp")
+
+	cmd := tmux.BuildEnsureNotifyOptionsCommand("oldapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("ensure notify options failed: %v", err)
+	}
+
+	bellAction := tt.GetOption(t, "oldapp", "bell-action")
+	if bellAction != "any" {
+		t.Errorf("bell-action = %q, want %q", bellAction, "any")
+	}
+
+	visualBell := tt.GetWindowOption(t, "oldapp", "visual-bell")
+	if visualBell != "off" {
+		t.Errorf("visual-bell = %q, want %q", visualBell, "off")
+	}
+
+	passthrough := tt.GetWindowOption(t, "oldapp", "allow-passthrough")
+	if passthrough != "on" {
+		t.Errorf("allow-passthrough = %q, want %q", passthrough, "on")
+	}
+}
+
+func TestEnsureNotifyOptions_Idempotent(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	tt.CreateSession(t, "myapp")
+
+	cmd := tmux.BuildEnsureNotifyOptionsCommand("myapp")
+
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("first ensure notify options failed: %v", err)
+	}
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("second ensure notify options failed: %v", err)
+	}
+
+	bellAction := tt.GetOption(t, "myapp", "bell-action")
+	if bellAction != "any" {
+		t.Errorf("bell-action = %q, want %q", bellAction, "any")
+	}
+
+	passthrough := tt.GetWindowOption(t, "myapp", "allow-passthrough")
+	if passthrough != "on" {
+		t.Errorf("allow-passthrough = %q, want %q", passthrough, "on")
+	}
+}
