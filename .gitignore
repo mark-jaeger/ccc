@@ -7,3 +7,6 @@ dist/
 
 # Code signing
 signing/
+
+# Worktrees
+.worktrees/

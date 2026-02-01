@@ -289,6 +289,26 @@ func TestNextAutoNameNonNumericSuffix(t *testing.T) {
 	}
 }
 
+func TestBuildListCommand_WithSocketOverride(t *testing.T) {
+	SocketOverride = "test-socket"
+	defer func() { SocketOverride = "" }()
+
+	cmd := BuildListCommand()
+	if !strings.Contains(cmd, "-L 'test-socket'") {
+		t.Errorf("expected -L 'test-socket' in command, got: %s", cmd)
+	}
+}
+
+func TestBuildCreateCommand_WithSocketOverride(t *testing.T) {
+	SocketOverride = "test-socket"
+	defer func() { SocketOverride = "" }()
+
+	cmd := BuildCreateCommand("rt1", "/tmp", "rt1")
+	if !strings.Contains(cmd, "-L 'test-socket'") {
+		t.Errorf("expected -L 'test-socket' in command, got: %s", cmd)
+	}
+}
+
 func TestFilterSessionsExactNameUntagged(t *testing.T) {
 	sessions := []Session{
 		{Name: "myapp", Project: "", Path: "/tmp", Windows: 1},
