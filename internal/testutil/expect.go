@@ -53,43 +53,66 @@ func StartCCC(t *testing.T, repoRoot string, tmuxSocket string, envOverrides map
 	}
 
 	t.Cleanup(func() {
-		cmd.Process.Kill()
-		cmd.Wait()
+		// Close the PTY first — this sends SIGHUP to the child's session,
+		// which terminates tmux attach and any other children.
 		ptmx.Close()
+		cmd.Process.Kill()
+		// Wait with a timeout to avoid hanging on cleanup.
+		done := make(chan struct{})
+		go func() {
+			cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
 	})
 
 	return &Process{PTY: ptmx, Cmd: cmd}
 }
 
+// readChunk holds data from a single PTY read.
+type readChunk struct {
+	data []byte
+	err  error
+}
+
 // ReadUntil reads from the PTY until the match string appears or timeout fires.
 // Returns all bytes read up to and including the match.
 // Fails the test on timeout.
+//
+// Reads are performed in a goroutine because PTY file descriptors on macOS
+// do not support SetReadDeadline; a direct Read can block indefinitely.
 func (p *Process) ReadUntil(t *testing.T, match string, timeout time.Duration) string {
 	t.Helper()
 
 	deadline := time.After(timeout)
 	var buf bytes.Buffer
-	tmp := make([]byte, 256)
 
 	for {
+		ch := make(chan readChunk, 1)
+		go func() {
+			tmp := make([]byte, 256)
+			n, err := p.PTY.Read(tmp)
+			ch <- readChunk{data: tmp[:n], err: err}
+		}()
+
 		select {
 		case <-deadline:
 			t.Fatalf("timeout waiting for %q in PTY output.\nGot so far:\n%s", match, buf.String())
 			return ""
-		default:
-		}
-
-		p.PTY.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		n, err := p.PTY.Read(tmp)
-		if n > 0 {
-			buf.Write(tmp[:n])
-			if bytes.Contains(buf.Bytes(), []byte(match)) {
-				return buf.String()
+		case rc := <-ch:
+			if len(rc.data) > 0 {
+				buf.Write(rc.data)
+				if bytes.Contains(buf.Bytes(), []byte(match)) {
+					return buf.String()
+				}
 			}
-		}
-		if err != nil && err != io.EOF {
-			if !os.IsTimeout(err) {
-				t.Fatalf("PTY read error: %v\nGot so far:\n%s", err, buf.String())
+			if rc.err != nil && rc.err != io.EOF {
+				if !os.IsTimeout(rc.err) {
+					t.Fatalf("PTY read error: %v\nGot so far:\n%s", rc.err, buf.String())
+				}
 			}
 		}
 	}
