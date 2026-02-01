@@ -294,8 +294,8 @@ func TestBuildListCommand_WithSocketOverride(t *testing.T) {
 	defer func() { SocketOverride = "" }()
 
 	cmd := BuildListCommand()
-	if !strings.Contains(cmd, "-L test-socket") {
-		t.Errorf("expected -L test-socket in command, got: %s", cmd)
+	if !strings.Contains(cmd, "-L 'test-socket'") {
+		t.Errorf("expected -L 'test-socket' in command, got: %s", cmd)
 	}
 }
 
@@ -304,8 +304,8 @@ func TestBuildCreateCommand_WithSocketOverride(t *testing.T) {
 	defer func() { SocketOverride = "" }()
 
 	cmd := BuildCreateCommand("rt1", "/tmp", "rt1")
-	if !strings.Contains(cmd, "-L test-socket") {
-		t.Errorf("expected -L test-socket in command, got: %s", cmd)
+	if !strings.Contains(cmd, "-L 'test-socket'") {
+		t.Errorf("expected -L 'test-socket' in command, got: %s", cmd)
 	}
 }
 

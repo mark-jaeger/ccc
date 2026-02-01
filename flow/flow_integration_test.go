@@ -43,7 +43,7 @@ func TestProjectFlow_CreateNewSession(t *testing.T) {
 	}
 
 	// Input: select project 1, enter for default session name
-	in := &slowReader{strings.NewReader("1\n\n")}
+	in := newSlowReader("1\n\n")
 	out := &bytes.Buffer{}
 
 	err := flow.ProjectFlow(in, out, tt, projects, nil, nil)
@@ -88,7 +88,7 @@ func TestProjectFlow_AttachExistingSession_SetsNotifyOptions(t *testing.T) {
 	}
 
 	// Input: select project 1, then select session 1
-	in := &slowReader{strings.NewReader("1\n1\n")}
+	in := newSlowReader("1\n1\n")
 	out := &bytes.Buffer{}
 
 	err := flow.ProjectFlow(in, out, tt, projects, nil, nil)
@@ -134,7 +134,7 @@ func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
 	}
 
 	// Input: select project 1, then select session 1 from session menu
-	in := &slowReader{strings.NewReader("1\n1\n")}
+	in := newSlowReader("1\n1\n")
 	out := &bytes.Buffer{}
 
 	err := flow.ProjectFlow(in, out, tt, projects, nil, nil)

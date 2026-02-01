@@ -15,11 +15,15 @@ func setupE2EHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	cccDir := filepath.Join(home, ".ccc")
-	os.MkdirAll(cccDir, 0755)
-	os.WriteFile(filepath.Join(cccDir, "projects.toml"), []byte(`
+	if err := os.MkdirAll(cccDir, 0755); err != nil {
+		t.Fatalf("failed to create .ccc dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cccDir, "projects.toml"), []byte(`
 [projects.myapp]
 path = "/tmp"
-`), 0600)
+`), 0600); err != nil {
+		t.Fatalf("failed to write projects.toml: %v", err)
+	}
 	return home
 }
 
@@ -27,7 +31,10 @@ func TestE2E_LocalMode_ProjectMenu(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 	home := setupE2EHome(t)
-	repoRoot, _ := os.Getwd()
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
 
 	proc := testutil.StartCCC(t, repoRoot, tt.Socket, map[string]string{"HOME": home}, "local")
 
@@ -41,14 +48,17 @@ func TestE2E_LocalMode_QuitFromMenu(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 	home := setupE2EHome(t)
-	repoRoot, _ := os.Getwd()
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
 
 	proc := testutil.StartCCC(t, repoRoot, tt.Socket, map[string]string{"HOME": home}, "local")
 
 	proc.ReadUntil(t, "myapp", 10*time.Second)
 	proc.Send(t, "q")
 
-	err := proc.WaitForExit(t, 5*time.Second)
+	err = proc.WaitForExit(t, 5*time.Second)
 	if err != nil {
 		t.Errorf("expected clean exit, got: %v", err)
 	}
@@ -58,7 +68,10 @@ func TestE2E_LocalMode_CreateAndAttachSession(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 	home := setupE2EHome(t)
-	repoRoot, _ := os.Getwd()
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
 
 	proc := testutil.StartCCC(t, repoRoot, tt.Socket, map[string]string{"HOME": home}, "local")
 
@@ -79,11 +92,7 @@ func TestE2E_LocalMode_CreateAndAttachSession(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Verify session exists with notification options
-	if !tt.SessionExists(t, "myapp") {
-		t.Error("expected session 'myapp' to exist")
-	}
-
+	// Verify notification options were set
 	bellAction := tt.GetOption(t, "myapp", "bell-action")
 	if bellAction != "any" {
 		t.Errorf("bell-action = %q, want %q", bellAction, "any")

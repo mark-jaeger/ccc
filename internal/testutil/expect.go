@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,10 +36,20 @@ func StartCCC(t *testing.T, repoRoot string, tmuxSocket string, envOverrides map
 	}
 	t.Cleanup(func() { os.Remove(binPath) })
 
-	// Build environment
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("CCC_TMUX_SOCKET=%s", tmuxSocket))
+	// Build environment: filter out keys we're overriding to avoid
+	// relying on "last value wins" semantics for duplicate env keys.
+	overrides := map[string]string{"CCC_TMUX_SOCKET": tmuxSocket}
 	for k, v := range envOverrides {
+		overrides[k] = v
+	}
+	var env []string
+	for _, e := range os.Environ() {
+		if k, _, ok := strings.Cut(e, "="); ok && overrides[k] != "" {
+			continue
+		}
+		env = append(env, e)
+	}
+	for k, v := range overrides {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -109,7 +120,12 @@ func (p *Process) ReadUntil(t *testing.T, match string, timeout time.Duration) s
 					return buf.String()
 				}
 			}
-			if rc.err != nil && rc.err != io.EOF {
+			if rc.err != nil {
+				if rc.err == io.EOF {
+					t.Fatalf("PTY closed (process exited) before finding %q.\nGot so far:\n%s",
+						match, buf.String())
+					return ""
+				}
 				if !os.IsTimeout(rc.err) {
 					t.Fatalf("PTY read error: %v\nGot so far:\n%s", rc.err, buf.String())
 				}

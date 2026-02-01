@@ -17,7 +17,7 @@ var SocketOverride string
 // tmuxCmd returns "tmux" or "tmux -L <socket>" depending on SocketOverride.
 func tmuxCmd() string {
 	if SocketOverride != "" {
-		return fmt.Sprintf("tmux -L %s", SocketOverride)
+		return fmt.Sprintf("tmux -L %s", shellutil.Quote(SocketOverride))
 	}
 	return "tmux"
 }
