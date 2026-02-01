@@ -60,7 +60,7 @@ func BuildListClientsCommand(session string) string {
 //
 // Session options: @ccc_project, @ccc_path, bell-action, silence-action,
 // activity-action, visual-activity.
-// Window options: visual-bell, monitor-silence.
+// Window options: visual-bell, monitor-silence, monitor-activity.
 //
 // monitor-silence causes tmux to generate an alert when the window has no
 // output for 5 seconds. With silence-action any, the alert propagates, and
@@ -113,12 +113,17 @@ func BuildCreateCommand(name, path, projectKey string) string {
 // This requires activity-action any + visual-activity on to be set on the
 // session so that the alert-activity hook fires without generating a bell.
 func BuildSetNotifyHooksCommand(name string) string {
-	qn := shellutil.Quote(name)
+	return buildNotifyHooks(shellutil.Quote(name))
+}
+
+// buildNotifyHooks returns the shell fragment that installs one-shot
+// alert-silence / alert-activity hooks on the given quoted session name.
+func buildNotifyHooks(quotedName string) string {
 	tc := tmuxCmd()
 	return fmt.Sprintf(
 		"%s set-hook -t %s alert-silence 'set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
 			" ; %s set-hook -t %s alert-activity 'set-window-option monitor-activity off ; set-window-option monitor-silence 5'",
-		tc, qn, tc, qn,
+		tc, quotedName, tc, quotedName,
 	)
 }
 
@@ -146,13 +151,10 @@ func BuildEnsureNotifyOptionsCommand(name string) string {
 			" \\; set-window-option -t %s visual-bell off"+
 			" \\; set-window-option -t %s monitor-silence 5"+
 			" \\; set-window-option -t %s monitor-activity off"+
-			" 2>/dev/null;"+
-			" %s set-hook -t %s alert-silence 'set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
-			" ; %s set-hook -t %s alert-activity 'set-window-option monitor-activity off ; set-window-option monitor-silence 5'"+
-			" ; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
+			" 2>/dev/null;",
 		tc, qn, qn, qn, qn, qn, qn, qn,
-		tc, qn,
-		tc, qn,
+	) + " " + buildNotifyHooks(qn) + fmt.Sprintf(
+		" ; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
 		tc, qn,
 	)
 }
