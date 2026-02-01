@@ -118,12 +118,17 @@ func BuildSetNotifyHooksCommand(name string) string {
 
 // buildNotifyHooks returns the shell fragment that installs one-shot
 // alert-silence / alert-activity hooks on the given quoted session name.
+// The alert-silence hook also posts a native macOS notification via osascript
+// (fails silently on non-macOS systems).
 func buildNotifyHooks(quotedName string) string {
 	tc := tmuxCmd()
+	// osascript notification piped via echo to avoid single-quote nesting.
+	// Escaping: Go raw string → shell (single-quoted) → tmux (double-quoted) → sh → osascript.
+	notify := `run-shell -b "echo \"display notification \\\"#{session_name} idle\\\" with title \\\"ccc\\\"\" | osascript 2>/dev/null || true"`
 	return fmt.Sprintf(
-		"%s set-hook -t %s alert-silence 'set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
+		"%s set-hook -t %s alert-silence '%s ; set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
 			" ; %s set-hook -t %s alert-activity 'set-window-option monitor-activity off ; set-window-option monitor-silence 5'",
-		tc, quotedName, tc, quotedName,
+		tc, quotedName, notify, tc, quotedName,
 	)
 }
 

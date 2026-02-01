@@ -171,6 +171,9 @@ func TestBuildSetNotifyHooksCommand(t *testing.T) {
 		"monitor-activity on",
 		"monitor-activity off",
 		"monitor-silence 5",
+		"osascript",
+		"display notification",
+		"#{session_name}",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("expected %q in: %s", want, cmd)
