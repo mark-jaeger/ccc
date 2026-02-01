@@ -56,12 +56,17 @@ func BuildListClientsCommand(session string) string {
 }
 
 // BuildCreateCommand returns a shell command that creates a new detached tmux
-// session with ccc metadata tags.
+// session with ccc metadata tags and notification options.
 //
-// Session options (set-option): @ccc_project, @ccc_path, bell-action.
-// Window options (set-window-option): visual-bell.
-// Window options must use set-window-option so they apply to the initial
-// window created by new-session, not just as a session-level default.
+// Session options (set-option): @ccc_project, @ccc_path, bell-action,
+// silence-action.
+// Window options (set-window-option): visual-bell, monitor-silence.
+//
+// monitor-silence causes tmux to generate an alert when the window has no
+// output for 5 seconds — this is the mechanism that triggers terminal
+// notifications when a tool (e.g. Claude Code) finishes and is waiting for
+// input. With visual-bell off and bell-action any, the alert is forwarded
+// as a real BEL character to the attached client's terminal.
 //
 // Note: allow-passthrough is set separately via BuildSetPassthroughCommand
 // because it requires tmux >= 3.3 and must not break session creation on
@@ -73,11 +78,15 @@ func BuildCreateCommand(name, path, projectKey string) string {
 			" \\; set-option -t %s @ccc_project %s"+
 			" \\; set-option -t %s @ccc_path %s"+
 			" \\; set-option -t %s bell-action any"+
-			" \\; set-window-option -t %s visual-bell off",
+			" \\; set-option -t %s silence-action any"+
+			" \\; set-window-option -t %s visual-bell off"+
+			" \\; set-window-option -t %s monitor-silence 5",
 		tmuxCmd(),
 		qn, shellutil.Quote(path),
 		qn, shellutil.Quote(projectKey),
 		qn, shellutil.Quote(path),
+		qn,
+		qn,
 		qn,
 		qn,
 	)
@@ -90,18 +99,20 @@ func BuildSetPassthroughCommand(name string) string {
 	return fmt.Sprintf("%s set-window-option -t %s allow-passthrough on", tmuxCmd(), shellutil.Quote(name))
 }
 
-// BuildEnsureNotifyOptionsCommand returns a shell command that sets bell and
-// passthrough options on an existing session. This is idempotent and safe to
-// call on every attach so that sessions created by older ccc versions get the
-// correct options. The allow-passthrough part is appended with "2>/dev/null"
-// so it silently fails on tmux < 3.3.
+// BuildEnsureNotifyOptionsCommand returns a shell command that sets bell,
+// silence monitoring, and passthrough options on an existing session. This is
+// idempotent and safe to call on every attach so that sessions created by
+// older ccc versions get the correct options. The allow-passthrough part is
+// appended with "2>/dev/null" so it silently fails on tmux < 3.3.
 func BuildEnsureNotifyOptionsCommand(name string) string {
 	qn := shellutil.Quote(name)
 	return fmt.Sprintf(
 		"%s set-option -t %s bell-action any"+
+			" \\; set-option -t %s silence-action any"+
 			" \\; set-window-option -t %s visual-bell off"+
+			" \\; set-window-option -t %s monitor-silence 5"+
 			" 2>/dev/null; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
-		tmuxCmd(), qn, qn, tmuxCmd(), qn,
+		tmuxCmd(), qn, qn, qn, qn, tmuxCmd(), qn,
 	)
 }
 

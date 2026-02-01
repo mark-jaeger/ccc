@@ -3,8 +3,14 @@
 package tmux_test
 
 import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
 	"testing"
+	"time"
 
+	"github.com/creack/pty"
 	"github.com/mark-jaeger/ccc/internal/testutil"
 	"github.com/mark-jaeger/ccc/tmux"
 )
@@ -66,6 +72,125 @@ func TestSetPassthrough_EnablesOption(t *testing.T) {
 	}
 }
 
+func TestCreateSession_SetsMonitorSilence(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	cmd := tmux.BuildCreateCommand("myapp", "/tmp/myapp", "myapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("create command failed: %v", err)
+	}
+
+	silenceAction := tt.GetOption(t, "myapp", "silence-action")
+	if silenceAction != "any" {
+		t.Errorf("silence-action = %q, want %q", silenceAction, "any")
+	}
+
+	monitorSilence := tt.GetWindowOption(t, "myapp", "monitor-silence")
+	if monitorSilence != "5" {
+		t.Errorf("monitor-silence = %q, want %q", monitorSilence, "5")
+	}
+}
+
+func TestMonitorSilence_TriggersAfterTimeout(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	// Create session with ccc's full notification setup
+	cmd := tmux.BuildCreateCommand("myapp", "/tmp", "myapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("create command failed: %v", err)
+	}
+	if _, err := tt.Run(tmux.BuildSetPassthroughCommand("myapp")); err != nil {
+		t.Fatalf("set passthrough failed: %v", err)
+	}
+
+	// Generate activity then let the window go silent
+	sendCmd := fmt.Sprintf("tmux send-keys -t myapp 'echo activity' Enter")
+	if _, err := tt.Run(sendCmd); err != nil {
+		t.Fatalf("send-keys failed: %v", err)
+	}
+
+	// Wait for monitor-silence timeout (5s) + margin
+	time.Sleep(7 * time.Second)
+
+	// The silence flag should be set
+	flagCmd := fmt.Sprintf("tmux list-windows -t myapp -F '#{window_silence_flag}'")
+	flag, err := tt.Run(flagCmd)
+	if err != nil {
+		t.Fatalf("list-windows failed: %v", err)
+	}
+	if flag != "1" {
+		t.Errorf("window_silence_flag = %q, want %q (monitor-silence should have triggered)", flag, "1")
+	}
+}
+
+func TestMonitorSilence_SendsBellToAttachedClient(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	// Create session with full notification setup and a short silence timeout
+	cmd := tmux.BuildCreateCommand("myapp", "/tmp", "myapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("create command failed: %v", err)
+	}
+	// Override monitor-silence to 2s for faster test
+	if _, err := tt.Run(fmt.Sprintf("tmux set-window-option -t myapp monitor-silence 2")); err != nil {
+		t.Fatalf("set monitor-silence failed: %v", err)
+	}
+
+	// Attach via PTY so we can capture the actual terminal output
+	attachCmd := exec.Command("tmux", "-L", tt.Socket, "attach", "-t", "myapp")
+	ptmx, err := pty.Start(attachCmd)
+	if err != nil {
+		t.Fatalf("failed to start tmux attach with PTY: %v", err)
+	}
+	t.Cleanup(func() {
+		ptmx.Close()
+		attachCmd.Process.Kill()
+		attachCmd.Wait()
+	})
+
+	// Generate activity then let the window go silent
+	sendKeysCmd := exec.Command("tmux", "-L", tt.Socket, "send-keys", "-t", "myapp", "echo hello", "Enter")
+	if out, err := sendKeysCmd.CombinedOutput(); err != nil {
+		t.Fatalf("send-keys failed: %v: %s", err, out)
+	}
+
+	// Read from PTY until we see BEL (0x07) or timeout
+	deadline := time.After(8 * time.Second)
+	var buf bytes.Buffer
+	foundBell := false
+
+	for !foundBell {
+		ch := make(chan struct{ n int; err error }, 1)
+		tmp := make([]byte, 256)
+		go func() {
+			n, err := ptmx.Read(tmp)
+			ch <- struct{ n int; err error }{n, err}
+		}()
+
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for BEL character in PTY output.\nGot %d bytes so far (no 0x07 found)", buf.Len())
+		case rc := <-ch:
+			if rc.n > 0 {
+				buf.Write(tmp[:rc.n])
+				if bytes.ContainsRune(buf.Bytes(), '\a') {
+					foundBell = true
+				}
+			}
+			if rc.err != nil {
+				if !os.IsTimeout(rc.err) {
+					t.Fatalf("PTY read error: %v", rc.err)
+				}
+			}
+		}
+	}
+
+	t.Logf("BEL character received after silence timeout (read %d bytes total)", buf.Len())
+}
+
 func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
@@ -82,9 +207,19 @@ func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
 		t.Errorf("bell-action = %q, want %q", bellAction, "any")
 	}
 
+	silenceAction := tt.GetOption(t, "oldapp", "silence-action")
+	if silenceAction != "any" {
+		t.Errorf("silence-action = %q, want %q", silenceAction, "any")
+	}
+
 	visualBell := tt.GetWindowOption(t, "oldapp", "visual-bell")
 	if visualBell != "off" {
 		t.Errorf("visual-bell = %q, want %q", visualBell, "off")
+	}
+
+	monitorSilence := tt.GetWindowOption(t, "oldapp", "monitor-silence")
+	if monitorSilence != "5" {
+		t.Errorf("monitor-silence = %q, want %q", monitorSilence, "5")
 	}
 
 	passthrough := tt.GetWindowOption(t, "oldapp", "allow-passthrough")
