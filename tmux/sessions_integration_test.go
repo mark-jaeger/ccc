@@ -4,8 +4,8 @@ package tmux_test
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +53,16 @@ func TestCreateSession_SetsNotifyOptions(t *testing.T) {
 		t.Errorf("silence-action = %q, want %q", silenceAction, "any")
 	}
 
+	activityAction := tt.GetOption(t, "myapp", "activity-action")
+	if activityAction != "any" {
+		t.Errorf("activity-action = %q, want %q", activityAction, "any")
+	}
+
+	visualActivity := tt.GetOption(t, "myapp", "visual-activity")
+	if visualActivity != "on" {
+		t.Errorf("visual-activity = %q, want %q", visualActivity, "on")
+	}
+
 	visualBell := tt.GetWindowOption(t, "myapp", "visual-bell")
 	if visualBell != "off" {
 		t.Errorf("visual-bell = %q, want %q", visualBell, "off")
@@ -61,6 +71,11 @@ func TestCreateSession_SetsNotifyOptions(t *testing.T) {
 	monitorSilence := tt.GetWindowOption(t, "myapp", "monitor-silence")
 	if monitorSilence != "5" {
 		t.Errorf("monitor-silence = %q, want %q", monitorSilence, "5")
+	}
+
+	monitorActivity := tt.GetWindowOption(t, "myapp", "monitor-activity")
+	if monitorActivity != "off" {
+		t.Errorf("monitor-activity = %q, want %q", monitorActivity, "off")
 	}
 }
 
@@ -112,21 +127,25 @@ func TestMonitorSilence_TriggersAfterTimeout(t *testing.T) {
 	}
 }
 
-func TestMonitorSilence_SendsBellToAttachedClient(t *testing.T) {
+func TestNotifyHooks_OneShotBell(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 
-	// Create session with full notification setup and a short silence timeout
+	// Create session with full notification setup
 	cmd := tmux.BuildCreateCommand("myapp", "/tmp", "myapp")
 	if _, err := tt.Run(cmd); err != nil {
 		t.Fatalf("create command failed: %v", err)
+	}
+	// Install one-shot hooks
+	if _, err := tt.Run(tmux.BuildSetNotifyHooksCommand("myapp")); err != nil {
+		t.Fatalf("set notify hooks failed: %v", err)
 	}
 	// Override monitor-silence to 2s for faster test
 	if _, err := tt.Run("tmux set-window-option -t myapp monitor-silence 2"); err != nil {
 		t.Fatalf("set monitor-silence failed: %v", err)
 	}
 
-	// Attach via PTY so we can capture the actual terminal output
+	// Attach via PTY so we can capture actual terminal output
 	attachCmd := exec.Command("tmux", "-L", tt.Socket, "attach", "-t", "myapp")
 	ptmx, err := pty.Start(attachCmd)
 	if err != nil {
@@ -139,43 +158,47 @@ func TestMonitorSilence_SendsBellToAttachedClient(t *testing.T) {
 	})
 
 	// Generate activity then let the window go silent
-	sendKeysCmd := exec.Command("tmux", "-L", tt.Socket, "send-keys", "-t", "myapp", "echo hello", "Enter")
-	if out, err := sendKeysCmd.CombinedOutput(); err != nil {
+	sendKeys := exec.Command("tmux", "-L", tt.Socket, "send-keys", "-t", "myapp", "echo hello", "Enter")
+	if out, err := sendKeys.CombinedOutput(); err != nil {
 		t.Fatalf("send-keys failed: %v: %s", err, out)
 	}
 
-	// Read from PTY until we see BEL (0x07) or timeout
-	deadline := time.After(8 * time.Second)
-	totalBytes := 0
-	foundBell := false
-
-	for !foundBell {
-		ch := make(chan struct{ n int; err error }, 1)
-		tmp := make([]byte, 256)
-		go func() {
-			n, err := ptmx.Read(tmp)
-			ch <- struct{ n int; err error }{n, err}
-		}()
-
-		select {
-		case <-deadline:
-			t.Fatalf("timeout waiting for BEL character in PTY output.\nGot %d bytes so far (no 0x07 found)", totalBytes)
-		case rc := <-ch:
-			if rc.n > 0 {
-				totalBytes += rc.n
-				if bytes.IndexByte(tmp[:rc.n], '\a') >= 0 {
-					foundBell = true
+	// Count BELs over 10 seconds (monitor-silence=2s, so without hooks we'd
+	// get ~4 bells; with hooks we should get exactly 1)
+	bellCount := 0
+	deadline := time.After(10 * time.Second)
+	bellCh := make(chan struct{}, 100)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				for i := 0; i < bytes.Count(buf[:n], []byte{'\a'}); i++ {
+					bellCh <- struct{}{}
 				}
 			}
-			if rc.err != nil {
-				if !os.IsTimeout(rc.err) {
-					t.Fatalf("PTY read error: %v", rc.err)
-				}
+			if err != nil {
+				return
 			}
 		}
-	}
+	}()
 
-	t.Logf("BEL character received after silence timeout (read %d bytes total)", totalBytes)
+	for {
+		select {
+		case <-bellCh:
+			bellCount++
+		case <-deadline:
+			if bellCount == 0 {
+				t.Fatal("no BEL received (expected exactly 1)")
+			}
+			if bellCount != 1 {
+				t.Errorf("got %d BELs, want exactly 1 (hooks should prevent repeating)", bellCount)
+			} else {
+				t.Logf("one-shot bell verified: exactly 1 BEL in 10s")
+			}
+			return
+		}
+	}
 }
 
 func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
@@ -199,6 +222,16 @@ func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
 		t.Errorf("silence-action = %q, want %q", silenceAction, "any")
 	}
 
+	activityAction := tt.GetOption(t, "oldapp", "activity-action")
+	if activityAction != "any" {
+		t.Errorf("activity-action = %q, want %q", activityAction, "any")
+	}
+
+	visualActivity := tt.GetOption(t, "oldapp", "visual-activity")
+	if visualActivity != "on" {
+		t.Errorf("visual-activity = %q, want %q", visualActivity, "on")
+	}
+
 	visualBell := tt.GetWindowOption(t, "oldapp", "visual-bell")
 	if visualBell != "off" {
 		t.Errorf("visual-bell = %q, want %q", visualBell, "off")
@@ -212,6 +245,18 @@ func TestEnsureNotifyOptions_SetsAllOptions(t *testing.T) {
 	passthrough := tt.GetWindowOption(t, "oldapp", "allow-passthrough")
 	if passthrough != "on" {
 		t.Errorf("allow-passthrough = %q, want %q", passthrough, "on")
+	}
+
+	// Verify hooks are installed
+	hooks, err := tt.Run("tmux show-hooks -t oldapp")
+	if err != nil {
+		t.Fatalf("show-hooks failed: %v", err)
+	}
+	if !strings.Contains(hooks, "alert-silence") {
+		t.Errorf("expected alert-silence hook in: %s", hooks)
+	}
+	if !strings.Contains(hooks, "alert-activity") {
+		t.Errorf("expected alert-activity hook in: %s", hooks)
 	}
 }
 
@@ -238,6 +283,11 @@ func TestEnsureNotifyOptions_Idempotent(t *testing.T) {
 	silenceAction := tt.GetOption(t, "myapp", "silence-action")
 	if silenceAction != "any" {
 		t.Errorf("silence-action = %q, want %q", silenceAction, "any")
+	}
+
+	activityAction := tt.GetOption(t, "myapp", "activity-action")
+	if activityAction != "any" {
+		t.Errorf("activity-action = %q, want %q", activityAction, "any")
 	}
 
 	monitorSilence := tt.GetWindowOption(t, "myapp", "monitor-silence")

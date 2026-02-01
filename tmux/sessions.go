@@ -58,15 +58,18 @@ func BuildListClientsCommand(session string) string {
 // BuildCreateCommand returns a shell command that creates a new detached tmux
 // session with ccc metadata tags and notification options.
 //
-// Session options (set-option): @ccc_project, @ccc_path, bell-action,
-// silence-action.
-// Window options (set-window-option): visual-bell, monitor-silence.
+// Session options: @ccc_project, @ccc_path, bell-action, silence-action,
+// activity-action, visual-activity.
+// Window options: visual-bell, monitor-silence.
 //
 // monitor-silence causes tmux to generate an alert when the window has no
-// output for 5 seconds — this is the mechanism that triggers terminal
-// notifications when a tool (e.g. Claude Code) finishes and is waiting for
-// input. With visual-bell off and bell-action any, the alert is forwarded
-// as a real BEL character to the attached client's terminal.
+// output for 5 seconds. With silence-action any, the alert propagates, and
+// with visual-bell off the alert becomes a real BEL character sent to the
+// attached terminal.
+//
+// activity-action any + visual-activity on allow the alert-activity hook to
+// fire (for re-arming monitor-silence) without generating an unwanted bell.
+// The one-shot hooks are set separately via BuildSetNotifyHooksCommand.
 //
 // Note: allow-passthrough is set separately via BuildSetPassthroughCommand
 // because it requires tmux >= 3.3 and must not break session creation on
@@ -79,8 +82,11 @@ func BuildCreateCommand(name, path, projectKey string) string {
 			" \\; set-option -t %s @ccc_path %s"+
 			" \\; set-option -t %s bell-action any"+
 			" \\; set-option -t %s silence-action any"+
+			" \\; set-option -t %s activity-action any"+
+			" \\; set-option -t %s visual-activity on"+
 			" \\; set-window-option -t %s visual-bell off"+
-			" \\; set-window-option -t %s monitor-silence 5",
+			" \\; set-window-option -t %s monitor-silence 5"+
+			" \\; set-window-option -t %s monitor-activity off",
 		tmuxCmd(),
 		qn, shellutil.Quote(path),
 		qn, shellutil.Quote(projectKey),
@@ -89,6 +95,30 @@ func BuildCreateCommand(name, path, projectKey string) string {
 		qn,
 		qn,
 		qn,
+		qn,
+		qn,
+		qn,
+	)
+}
+
+// BuildSetNotifyHooksCommand returns a shell command that installs tmux hooks
+// to make monitor-silence fire exactly once per silence period.
+//
+// Without hooks, monitor-silence fires repeatedly every N seconds while the
+// window is silent. The hooks create a state machine:
+//
+//	silence detected → bell fires → disable monitor-silence, enable monitor-activity
+//	activity detected → disable monitor-activity, re-enable monitor-silence
+//
+// This requires activity-action any + visual-activity on to be set on the
+// session so that the alert-activity hook fires without generating a bell.
+func BuildSetNotifyHooksCommand(name string) string {
+	qn := shellutil.Quote(name)
+	tc := tmuxCmd()
+	return fmt.Sprintf(
+		"%s set-hook -t %s alert-silence 'set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
+			" ; %s set-hook -t %s alert-activity 'set-window-option monitor-activity off ; set-window-option monitor-silence 5'",
+		tc, qn, tc, qn,
 	)
 }
 
@@ -100,19 +130,30 @@ func BuildSetPassthroughCommand(name string) string {
 }
 
 // BuildEnsureNotifyOptionsCommand returns a shell command that sets bell,
-// silence monitoring, and passthrough options on an existing session. This is
-// idempotent and safe to call on every attach so that sessions created by
-// older ccc versions get the correct options. The allow-passthrough part is
-// appended with "2>/dev/null" so it silently fails on tmux < 3.3.
+// silence monitoring, activity, passthrough options, and one-shot hooks on
+// an existing session. This is idempotent and safe to call on every attach
+// so that sessions created by older ccc versions get the correct options.
+// The allow-passthrough part is appended with "2>/dev/null" so it silently
+// fails on tmux < 3.3.
 func BuildEnsureNotifyOptionsCommand(name string) string {
 	qn := shellutil.Quote(name)
+	tc := tmuxCmd()
 	return fmt.Sprintf(
 		"%s set-option -t %s bell-action any"+
 			" \\; set-option -t %s silence-action any"+
+			" \\; set-option -t %s activity-action any"+
+			" \\; set-option -t %s visual-activity on"+
 			" \\; set-window-option -t %s visual-bell off"+
 			" \\; set-window-option -t %s monitor-silence 5"+
-			" 2>/dev/null; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
-		tmuxCmd(), qn, qn, qn, qn, tmuxCmd(), qn,
+			" \\; set-window-option -t %s monitor-activity off"+
+			" 2>/dev/null;"+
+			" %s set-hook -t %s alert-silence 'set-window-option monitor-silence 0 ; set-window-option monitor-activity on'"+
+			" ; %s set-hook -t %s alert-activity 'set-window-option monitor-activity off ; set-window-option monitor-silence 5'"+
+			" ; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
+		tc, qn, qn, qn, qn, qn, qn, qn,
+		tc, qn,
+		tc, qn,
+		tc, qn,
 	)
 }
 
