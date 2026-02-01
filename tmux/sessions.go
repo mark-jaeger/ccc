@@ -10,6 +10,18 @@ import (
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
+// SocketOverride, when non-empty, adds -L <socket> to all tmux commands.
+// Used for test isolation. Set from CCC_TMUX_SOCKET environment variable.
+var SocketOverride string
+
+// tmuxCmd returns "tmux" or "tmux -L <socket>" depending on SocketOverride.
+func tmuxCmd() string {
+	if SocketOverride != "" {
+		return fmt.Sprintf("tmux -L %s", SocketOverride)
+	}
+	return "tmux"
+}
+
 // Session represents a tmux session with optional ccc metadata.
 type Session struct {
 	Name     string
@@ -35,12 +47,12 @@ const clientFormat = "#{client_tty}: #{client_width}x#{client_height} #{client_f
 
 // BuildListCommand returns a shell command that lists all tmux sessions.
 func BuildListCommand() string {
-	return fmt.Sprintf("tmux list-sessions -F '%s' 2>/dev/null || true", listFormat)
+	return fmt.Sprintf("%s list-sessions -F '%s' 2>/dev/null || true", tmuxCmd(), listFormat)
 }
 
 // BuildListClientsCommand returns a shell command that lists clients for a session.
 func BuildListClientsCommand(session string) string {
-	return fmt.Sprintf("tmux list-clients -t %s -F '%s'", shellutil.Quote(session), clientFormat)
+	return fmt.Sprintf("%s list-clients -t %s -F '%s'", tmuxCmd(), shellutil.Quote(session), clientFormat)
 }
 
 // BuildCreateCommand returns a shell command that creates a new detached tmux
@@ -57,11 +69,12 @@ func BuildListClientsCommand(session string) string {
 func BuildCreateCommand(name, path, projectKey string) string {
 	qn := shellutil.Quote(name)
 	return fmt.Sprintf(
-		"tmux new-session -d -s %s -c %s"+
+		"%s new-session -d -s %s -c %s"+
 			" \\; set-option -t %s @ccc_project %s"+
 			" \\; set-option -t %s @ccc_path %s"+
 			" \\; set-option -t %s bell-action any"+
 			" \\; set-window-option -t %s visual-bell off",
+		tmuxCmd(),
 		qn, shellutil.Quote(path),
 		qn, shellutil.Quote(projectKey),
 		qn, shellutil.Quote(path),
@@ -74,7 +87,7 @@ func BuildCreateCommand(name, path, projectKey string) string {
 // passthrough on a session. This requires tmux >= 3.3; callers should ignore
 // errors for backward compatibility with older tmux versions.
 func BuildSetPassthroughCommand(name string) string {
-	return fmt.Sprintf("tmux set-window-option -t %s allow-passthrough on", shellutil.Quote(name))
+	return fmt.Sprintf("%s set-window-option -t %s allow-passthrough on", tmuxCmd(), shellutil.Quote(name))
 }
 
 // BuildEnsureNotifyOptionsCommand returns a shell command that sets bell and
@@ -85,27 +98,27 @@ func BuildSetPassthroughCommand(name string) string {
 func BuildEnsureNotifyOptionsCommand(name string) string {
 	qn := shellutil.Quote(name)
 	return fmt.Sprintf(
-		"tmux set-option -t %s bell-action any"+
+		"%s set-option -t %s bell-action any"+
 			" \\; set-window-option -t %s visual-bell off"+
-			" 2>/dev/null; tmux set-window-option -t %s allow-passthrough on 2>/dev/null; true",
-		qn, qn, qn,
+			" 2>/dev/null; %s set-window-option -t %s allow-passthrough on 2>/dev/null; true",
+		tmuxCmd(), qn, qn, tmuxCmd(), qn,
 	)
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.
 func BuildAttachCommand(name string) string {
-	return fmt.Sprintf("tmux attach -t %s", shellutil.Quote(name))
+	return fmt.Sprintf("%s attach -t %s", tmuxCmd(), shellutil.Quote(name))
 }
 
 // BuildKillCommand returns a shell command to kill a named session.
 func BuildKillCommand(name string) string {
-	return fmt.Sprintf("tmux kill-session -t %s", shellutil.Quote(name))
+	return fmt.Sprintf("%s kill-session -t %s", tmuxCmd(), shellutil.Quote(name))
 }
 
 // BuildDetachClientsCommand returns a shell command to detach all clients
 // attached to the named session.
 func BuildDetachClientsCommand(name string) string {
-	return fmt.Sprintf("tmux detach-client -s %s", shellutil.Quote(name))
+	return fmt.Sprintf("%s detach-client -s %s", tmuxCmd(), shellutil.Quote(name))
 }
 
 // BuildCheckTmuxCommand returns a shell command to check if tmux is installed.
