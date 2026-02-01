@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/mark-jaeger/ccc/tmux"
 )
 
 // TestTmux manages an isolated tmux server for integration testing.
@@ -126,6 +128,16 @@ func (tt *TestTmux) ListSessions(t *testing.T) []string {
 		}
 	}
 	return names
+}
+
+// SetSocketOverride sets tmux.SocketOverride for the duration of a test.
+// This is used by e2e tests where the ccc binary reads the override.
+// For integration tests that call Build*Command directly, prefer using
+// TestTmux.Run which injects the socket via string replacement.
+func (tt *TestTmux) SetSocketOverride(t *testing.T) {
+	t.Helper()
+	tmux.SocketOverride = tt.Socket
+	t.Cleanup(func() { tmux.SocketOverride = "" })
 }
 
 // injectSocket replaces "tmux " with "tmux -L <socket> " in the command string.
