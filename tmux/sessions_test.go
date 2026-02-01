@@ -130,7 +130,7 @@ func TestParseEmptyOutput(t *testing.T) {
 func TestBuildCreateCommand(t *testing.T) {
 	cmd := BuildCreateCommand("rt1", "/home/user/proj", "rt1")
 
-	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' bell-action any \\; set-window-option -t 'rt1' visual-bell off"
+	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' bell-action any \\; set-option -t 'rt1' silence-action any \\; set-window-option -t 'rt1' visual-bell off \\; set-window-option -t 'rt1' monitor-silence 5"
 	if cmd != expected {
 		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
@@ -164,19 +164,20 @@ func TestBuildSetPassthroughCommand(t *testing.T) {
 
 func TestBuildEnsureNotifyOptionsCommand(t *testing.T) {
 	cmd := BuildEnsureNotifyOptionsCommand("rt1")
-	// Should set bell-action and visual-bell in one compound command,
-	// then allow-passthrough separately (tmux < 3.3 compat), ending with "true".
-	if !strings.Contains(cmd, "bell-action any") {
-		t.Errorf("expected bell-action any in: %s", cmd)
-	}
-	if !strings.Contains(cmd, "visual-bell off") {
-		t.Errorf("expected visual-bell off in: %s", cmd)
-	}
-	if !strings.Contains(cmd, "allow-passthrough on") {
-		t.Errorf("expected allow-passthrough on in: %s", cmd)
-	}
-	if !strings.Contains(cmd, "2>/dev/null") {
-		t.Errorf("expected 2>/dev/null for backward compat in: %s", cmd)
+	// Should set bell-action, silence-action, visual-bell, and monitor-silence
+	// in one compound command, then allow-passthrough separately (tmux < 3.3
+	// compat), ending with "true".
+	for _, want := range []string{
+		"bell-action any",
+		"silence-action any",
+		"visual-bell off",
+		"monitor-silence 5",
+		"allow-passthrough on",
+		"2>/dev/null",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("expected %q in: %s", want, cmd)
+		}
 	}
 	// Must end with "true" so the overall command succeeds even if passthrough fails
 	if !strings.HasSuffix(strings.TrimSpace(cmd), "true") {
