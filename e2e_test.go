@@ -70,8 +70,14 @@ func TestE2E_LocalMode_CreateAndAttachSession(t *testing.T) {
 	proc.ReadUntil(t, "Session name", 5*time.Second)
 	proc.Send(t, "\n")
 
-	// Give tmux a moment to create the session
-	time.Sleep(1 * time.Second)
+	// Poll for session creation instead of fixed sleep
+	deadline := time.Now().Add(5 * time.Second)
+	for !tt.SessionExists(t, "myapp") {
+		if time.Now().After(deadline) {
+			t.Fatal("session 'myapp' not created within timeout")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	// Verify session exists with notification options
 	if !tt.SessionExists(t, "myapp") {

@@ -28,6 +28,10 @@ func (s *slowReader) Read(p []byte) (int, error) {
 	return s.r.Read(p[:1])
 }
 
+func newSlowReader(s string) *slowReader {
+	return &slowReader{strings.NewReader(s)}
+}
+
 func TestProjectFlow_CreateNewSession(t *testing.T) {
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
@@ -144,5 +148,36 @@ func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
 	}
 	if strings.Contains(output, "Sessions for other") {
 		t.Errorf("should not show sessions for 'other' project, got: %s", output)
+	}
+}
+
+func TestSessionFlow_DetachSession(t *testing.T) {
+	t.Parallel()
+	tt := testutil.NewTestTmux(t)
+
+	// Create a session with metadata
+	cmd := tmux.BuildCreateCommand("myapp", "/tmp", "myapp")
+	if _, err := tt.Run(cmd); err != nil {
+		t.Fatalf("create session failed: %v", err)
+	}
+
+	// Input: select session 1 for detach action, then quit
+	// "d" triggers detach, "1" selects which session, then "q" quits the menu
+	in := newSlowReader("d\n1\nq\n")
+	out := &bytes.Buffer{}
+
+	err := flow.SessionFlow(in, out, tt, "myapp", "/tmp")
+	if err != nil {
+		t.Fatalf("SessionFlow error: %v", err)
+	}
+
+	// Session should still exist after detach
+	if !tt.SessionExists(t, "myapp") {
+		t.Error("expected session 'myapp' to still exist after detach")
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "No clients attached") {
+		t.Errorf("expected 'No clients attached' message (no real clients in test), got: %s", output)
 	}
 }
