@@ -27,8 +27,15 @@ func NewTestTmux(t *testing.T) *TestTmux {
 		t.Skip("tmux not installed, skipping integration test")
 	}
 
-	// Generate unique socket name
-	socket := fmt.Sprintf("ccc-test-%s-%d", sanitize(t.Name()), rand.Int63())
+	// Generate unique socket name.
+	// Truncate the test name portion to avoid exceeding the Unix socket path
+	// length limit (~104 chars). The socket path is /tmp/tmux-<uid>/<socket>.
+	name := sanitize(t.Name())
+	const maxNameLen = 30
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen]
+	}
+	socket := fmt.Sprintf("ccc-test-%s-%d", name, rand.Int63())
 
 	tt := &TestTmux{Socket: socket}
 
