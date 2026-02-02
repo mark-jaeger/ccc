@@ -130,7 +130,11 @@ func TestParseEmptyOutput(t *testing.T) {
 func TestBuildCreateCommand(t *testing.T) {
 	cmd := BuildCreateCommand("rt1", "/home/user/proj", "rt1")
 
-	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj' \\; set-option -t 'rt1' @ccc_project 'rt1' \\; set-option -t 'rt1' @ccc_path '/home/user/proj' \\; set-option -t 'rt1' bell-action any \\; set-option -t 'rt1' silence-action any \\; set-option -t 'rt1' activity-action any \\; set-option -t 'rt1' visual-activity on \\; set-window-option -t 'rt1' visual-bell off \\; set-window-option -t 'rt1' monitor-silence 5 \\; set-window-option -t 'rt1' monitor-activity off"
+	expected := "tmux new-session -d -s 'rt1' -c '/home/user/proj'" +
+		" \\; set-option -t 'rt1' @ccc_project 'rt1'" +
+		" \\; set-option -t 'rt1' @ccc_path '/home/user/proj'" +
+		" \\; set-option -t 'rt1' bell-action any" +
+		" \\; set-window-option -t 'rt1' visual-bell off"
 	if cmd != expected {
 		t.Errorf("expected:\n  %s\ngot:\n  %s", expected, cmd)
 	}
@@ -162,39 +166,30 @@ func TestBuildSetPassthroughCommand(t *testing.T) {
 	}
 }
 
-func TestBuildSetNotifyHooksCommand(t *testing.T) {
-	cmd := BuildSetNotifyHooksCommand("rt1")
-	for _, want := range []string{
-		"set-hook -t 'rt1' alert-silence",
-		"set-hook -t 'rt1' alert-activity",
-		"monitor-silence 0",
-		"monitor-activity on",
-		"monitor-activity off",
-		"monitor-silence 5",
-	} {
-		if !strings.Contains(cmd, want) {
-			t.Errorf("expected %q in: %s", want, cmd)
-		}
-	}
-}
-
 func TestBuildEnsureNotifyOptionsCommand(t *testing.T) {
 	cmd := BuildEnsureNotifyOptionsCommand("rt1")
 	for _, want := range []string{
 		"bell-action any",
-		"silence-action any",
-		"activity-action any",
-		"visual-activity on",
 		"visual-bell off",
-		"monitor-silence 5",
-		"monitor-activity off",
-		"alert-silence",
-		"alert-activity",
 		"allow-passthrough on",
 		"2>/dev/null",
 	} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("expected %q in: %s", want, cmd)
+		}
+	}
+	// monitor-silence machinery should be gone
+	for _, gone := range []string{
+		"silence-action",
+		"activity-action",
+		"visual-activity",
+		"monitor-silence",
+		"monitor-activity",
+		"alert-silence",
+		"alert-activity",
+	} {
+		if strings.Contains(cmd, gone) {
+			t.Errorf("unexpected %q in simplified command: %s", gone, cmd)
 		}
 	}
 	if !strings.HasSuffix(strings.TrimSpace(cmd), "true") {
