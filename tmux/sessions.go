@@ -96,8 +96,8 @@ func BuildSetPassthroughCommand(name string) string {
 // forwarding, visual-bell, and passthrough options on an existing session.
 // This is idempotent and safe to call on every attach so that sessions
 // created by older ccc versions get the correct options.
-// The allow-passthrough part uses "2>/dev/null" so it silently fails on
-// tmux < 3.3.
+// Both commands use 2>/dev/null to suppress errors; this is primarily
+// needed for the allow-passthrough part which requires tmux >= 3.3.
 func BuildEnsureNotifyOptionsCommand(name string) string {
 	qn := shellutil.Quote(name)
 	tc := tmuxCmd()
