@@ -99,6 +99,25 @@ path = "/Users/mark/Projects/jd/rt1"
 path = "/Users/mark/Projects/jd/pro-rag"
 ```
 
+### Notifications
+
+ccc configures tmux to forward bell signals so you get notified when a program (like Claude Code) finishes and wants your attention:
+
+| tmux option | value | what it does |
+|---|---|---|
+| `bell-action` | `any` | Forward BEL from any window to the terminal |
+| `visual-bell` | `off` | Send the real BEL byte instead of flashing the status bar |
+| `allow-passthrough` | `on` | Let escape sequences pass through tmux (requires tmux >= 3.3) |
+
+ccc does **not** use `monitor-silence` — that approach produces false alerts during long thinking pauses. Instead, it relies on the program itself emitting a BEL (`\a`) when it's ready for input.
+
+For the notification to reach macOS, configure your terminal:
+
+- **iTerm2:** Profiles → Terminal → Notifications → enable "Notification center alerts"
+- **Terminal.app:** Settings → Profiles → Advanced → Bell → "Bounce dock icon"
+
+See [docs/notification-chain.md](docs/notification-chain.md) for a detailed walkthrough of the full signal chain.
+
 ## First-run setup
 
 On first run with no config, ccc walks you through:
