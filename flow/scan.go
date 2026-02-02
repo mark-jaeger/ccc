@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/internal/shellutil"
 	"github.com/mark-jaeger/ccc/scan"
 	sshpkg "github.com/mark-jaeger/ccc/ssh"
 	"github.com/mark-jaeger/ccc/ui"
@@ -36,7 +35,7 @@ func RunScanFlow(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostName 
 		return handleNoResults(in, out, conn, hostName)
 	}
 
-	return selectProjects(in, out, conn, results)
+	return selectProjects(in, out, results)
 }
 
 func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostName string) (*config.ProjectsConfig, error) {
@@ -73,7 +72,7 @@ func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostN
 			fmt.Fprintf(out, "  Still no projects found.\n")
 			return nil, nil
 		}
-		return selectProjects(in, out, conn, results)
+		return selectProjects(in, out, results)
 	}
 
 	// Manual path
@@ -91,10 +90,10 @@ func handleNoResults(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostN
 		fmt.Fprintf(out, "  No projects found at %s.\n", path)
 		return nil, nil
 	}
-	return selectProjects(in, out, conn, results)
+	return selectProjects(in, out, results)
 }
 
-func selectProjects(in io.Reader, out io.Writer, conn *sshpkg.Connection, results []scan.ScanResult) (*config.ProjectsConfig, error) {
+func selectProjects(in io.Reader, out io.Writer, results []scan.ScanResult) (*config.ProjectsConfig, error) {
 	fmt.Fprintf(out, "\n  Found %d projects:\n", len(results))
 	for i, r := range results {
 		fmt.Fprintf(out, "  [%d] %-20s %s\n", i+1, r.Name, r.Path)
@@ -128,16 +127,6 @@ func selectProjects(in io.Reader, out io.Writer, conn *sshpkg.Connection, result
 		return nil, nil
 	}
 
-	// Save to host
-	data, err := config.SerializeProjectsConfig(projects)
-	if err != nil {
-		return nil, err
-	}
-	writeCmd := fmt.Sprintf("mkdir -p ~/.ccc && printf '%%s' %s > ~/.ccc/projects.toml", shellutil.Quote(string(data)))
-	if _, err := conn.Run(writeCmd); err != nil {
-		return nil, fmt.Errorf("failed to write projects.toml: %w", err)
-	}
-	fmt.Fprintf(out, "  Saved %d projects to ~/.ccc/projects.toml\n", len(projects.Projects))
-
+	fmt.Fprintf(out, "  Selected %d project(s).\n", len(projects.Projects))
 	return projects, nil
 }
