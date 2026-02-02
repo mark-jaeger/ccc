@@ -238,8 +238,6 @@ func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, proje
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Set one-shot notification hooks (tmux >= 2.4; errors ignored for older versions).
-	runner.Run(tmux.BuildSetNotifyHooksCommand(name))
 	// Enable passthrough for escape sequences (tmux >= 3.3; errors ignored for older versions).
 	runner.Run(tmux.BuildSetPassthroughCommand(name))
 
