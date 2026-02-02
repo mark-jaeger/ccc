@@ -65,7 +65,14 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 					return err
 				}
 				if newProjects != nil {
-					projects = newProjects
+					for k, p := range newProjects.Projects {
+						projects.Projects[k] = p
+					}
+					if onSave != nil {
+						if saveErr := onSave(projects); saveErr != nil {
+							fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+						}
+					}
 				}
 				continue
 			}
