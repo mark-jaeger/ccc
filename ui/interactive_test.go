@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildActionBarBasic(t *testing.T) {
@@ -242,6 +243,71 @@ func TestReadKeyClosedPipe(t *testing.T) {
 	// Closed pipe should return keyEsc (not keyNone) to exit cleanly
 	if evt != keyEsc {
 		t.Errorf("expected keyEsc on closed pipe, got %d", evt)
+	}
+}
+
+func TestReadKeySplitEscSeq_1_2(t *testing.T) {
+	// Simulate ESC arriving alone, then '[' + 'A' shortly after (split read).
+	escTimeout = 200 * time.Millisecond // widen for CI reliability
+	defer func() { escTimeout = 50 * time.Millisecond }()
+
+	r, w, _ := os.Pipe()
+	defer r.Close()
+
+	go func() {
+		w.Write([]byte{0x1b})           // ESC alone
+		time.Sleep(10 * time.Millisecond)
+		w.Write([]byte{'[', 'A'})       // rest of sequence
+		w.Close()
+	}()
+
+	evt, _ := readKey(r)
+	if evt != keyUp {
+		t.Errorf("expected keyUp from split 1+2, got %d", evt)
+	}
+}
+
+func TestReadKeySplitEscSeq_1_1_1(t *testing.T) {
+	// Simulate ESC, then '[', then 'B' arriving as three separate reads.
+	escTimeout = 200 * time.Millisecond
+	defer func() { escTimeout = 50 * time.Millisecond }()
+
+	r, w, _ := os.Pipe()
+	defer r.Close()
+
+	go func() {
+		w.Write([]byte{0x1b})
+		time.Sleep(10 * time.Millisecond)
+		w.Write([]byte{'['})
+		time.Sleep(10 * time.Millisecond)
+		w.Write([]byte{'B'})
+		w.Close()
+	}()
+
+	evt, _ := readKey(r)
+	if evt != keyDown {
+		t.Errorf("expected keyDown from split 1+1+1, got %d", evt)
+	}
+}
+
+func TestReadKeySplitEscSeq_2_1(t *testing.T) {
+	// Simulate ESC + '[' arriving together, then 'A' separately.
+	escTimeout = 200 * time.Millisecond
+	defer func() { escTimeout = 50 * time.Millisecond }()
+
+	r, w, _ := os.Pipe()
+	defer r.Close()
+
+	go func() {
+		w.Write([]byte{0x1b, '['})
+		time.Sleep(10 * time.Millisecond)
+		w.Write([]byte{'A'})
+		w.Close()
+	}()
+
+	evt, _ := readKey(r)
+	if evt != keyUp {
+		t.Errorf("expected keyUp from split 2+1, got %d", evt)
 	}
 }
 
