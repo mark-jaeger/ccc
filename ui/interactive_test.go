@@ -246,6 +246,51 @@ func TestReadKeyClosedPipe(t *testing.T) {
 	}
 }
 
+func TestReadKeyArrowUpSS3(t *testing.T) {
+	// Application mode (DECCKM set): arrow up sends ESC O A instead of ESC [ A
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{0x1b, 'O', 'A'})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyUp {
+		t.Errorf("expected keyUp from SS3 sequence, got %d", evt)
+	}
+}
+
+func TestReadKeyArrowDownSS3(t *testing.T) {
+	// Application mode (DECCKM set): arrow down sends ESC O B instead of ESC [ B
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	w.Write([]byte{0x1b, 'O', 'B'})
+	w.Close()
+	evt, _ := readKey(r)
+	if evt != keyDown {
+		t.Errorf("expected keyDown from SS3 sequence, got %d", evt)
+	}
+}
+
+func TestReadKeySplitSS3_1_2(t *testing.T) {
+	// Split read of SS3 sequence: ESC alone, then 'O' + 'B'
+	escTimeout = 200 * time.Millisecond
+	defer func() { escTimeout = 50 * time.Millisecond }()
+
+	r, w, _ := os.Pipe()
+	defer r.Close()
+
+	go func() {
+		w.Write([]byte{0x1b})
+		time.Sleep(10 * time.Millisecond)
+		w.Write([]byte{'O', 'B'})
+		w.Close()
+	}()
+
+	evt, _ := readKey(r)
+	if evt != keyDown {
+		t.Errorf("expected keyDown from split SS3 1+2, got %d", evt)
+	}
+}
+
 func TestReadKeySplitEscSeq_1_2(t *testing.T) {
 	// Simulate ESC arriving alone, then '[' + 'A' shortly after (split read).
 	escTimeout = 200 * time.Millisecond // widen for CI reliability

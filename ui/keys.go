@@ -40,12 +40,14 @@ func readKey(f *os.File) (keyEvent, rune) {
 	}
 
 	// If all 3 bytes arrived at once, check for escape sequence first.
-	if n == 3 && buf[0] == 27 && buf[1] == '[' {
+	// Handles both CSI (ESC [) and SS3 (ESC O) forms — the latter is sent
+	// when the terminal is in application cursor mode (DECCKM set).
+	if n == 3 && buf[0] == 27 && (buf[1] == '[' || buf[1] == 'O') {
 		return escSeqKey(buf[2])
 	}
 
-	// If 2 bytes arrived starting with ESC + '[', read one more.
-	if n == 2 && buf[0] == 27 && buf[1] == '[' {
+	// If 2 bytes arrived starting with ESC + '[' or ESC + 'O', read one more.
+	if n == 2 && buf[0] == 27 && (buf[1] == '[' || buf[1] == 'O') {
 		var third [1]byte
 		f.SetReadDeadline(time.Now().Add(escTimeout))
 		n2, err2 := f.Read(third[:])
@@ -71,11 +73,11 @@ func readKey(f *os.File) (keyEvent, rune) {
 			if err2 != nil || n2 == 0 {
 				return keyEsc, 0 // bare escape
 			}
-			if n2 >= 2 && seq[0] == '[' {
+			if n2 >= 2 && (seq[0] == '[' || seq[0] == 'O') {
 				return escSeqKey(seq[1])
 			}
-			if n2 == 1 && seq[0] == '[' {
-				// Got ESC + '[', need one more byte.
+			if n2 == 1 && (seq[0] == '[' || seq[0] == 'O') {
+				// Got ESC + '[' or ESC + 'O', need one more byte.
 				var third [1]byte
 				f.SetReadDeadline(time.Now().Add(escTimeout))
 				n3, err3 := f.Read(third[:])
@@ -93,7 +95,8 @@ func readKey(f *os.File) (keyEvent, rune) {
 	return keyNone, 0
 }
 
-// escSeqKey maps the final byte of a CSI sequence (ESC [ X) to a key event.
+// escSeqKey maps the final byte of an arrow key sequence to a key event.
+// Works for both CSI (ESC [ X) and SS3 (ESC O X) forms.
 func escSeqKey(b byte) (keyEvent, rune) {
 	switch b {
 	case 'A':
