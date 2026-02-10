@@ -120,6 +120,11 @@ func BuildKillCommand(name string) string {
 	return fmt.Sprintf("%s kill-session -t %s", tmuxCmd(), shellutil.Quote(name))
 }
 
+// BuildRenameCommand returns a shell command to rename a tmux session.
+func BuildRenameCommand(oldName, newName string) string {
+	return fmt.Sprintf("%s rename-session -t %s %s", tmuxCmd(), shellutil.Quote(oldName), shellutil.Quote(newName))
+}
+
 // BuildDetachClientsCommand returns a shell command to detach all clients
 // attached to the named session.
 func BuildDetachClientsCommand(name string) string {
