@@ -145,6 +145,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 			ExtraActions: []ui.ExtraAction{
 				{Key: "t", Label: "Detach clients", ID: "detach", ItemAction: true},
 				{Key: "n", Label: "New session", ID: "new"},
+				{Key: "r", Label: "Rename session", ID: "rename", ItemAction: true},
 				{Key: "x", Label: "Kill session", ID: "kill", ItemAction: true},
 			},
 		})
@@ -162,6 +163,11 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 				continue
 			case "kill":
 				if err := killSession(in, out, runner, result.Selected, sessions); err != nil {
+					return err
+				}
+				continue
+			case "rename":
+				if err := renameSession(in, out, runner, projectKey, result.Selected, sessions); err != nil {
 					return err
 				}
 				continue
@@ -278,5 +284,39 @@ func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, s
 		return fmt.Errorf("failed to kill session: %w", err)
 	}
 	fmt.Fprintf(out, "  \u2713 Killed session %s\n", item.Key)
+	return nil
+}
+
+func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string, item ui.MenuItem, sessions []tmux.Session) error {
+	prompt := "New suffix (enter for 'main')"
+	suffix, err := ui.Prompt(in, out, prompt)
+	if err != nil {
+		return err
+	}
+	if suffix == "" {
+		suffix = "main"
+	}
+
+	newName := projectKey + "-" + suffix
+
+	// Check if new name conflicts with existing session
+	for _, s := range sessions {
+		if s.Name == newName {
+			fmt.Fprintf(out, "  Session %s already exists.\n", newName)
+			return nil
+		}
+	}
+
+	// Check if new name equals old name (no-op)
+	if newName == item.Key {
+		return nil
+	}
+
+	renameCmd := tmux.BuildRenameCommand(item.Key, newName)
+	if _, err := runner.Run(renameCmd); err != nil {
+		return fmt.Errorf("failed to rename session: %w", err)
+	}
+
+	fmt.Fprintf(out, "  \u2713 Renamed %s \u2192 %s\n", item.Key, newName)
 	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/tmux"
+	"github.com/mark-jaeger/ccc/ui"
 )
 
 // mockRunner implements the Runner interface for testing.
@@ -493,5 +495,77 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 	// Project should still exist since confirmation wasn't provided
 	if _, exists := projects.Projects["myapp"]; !exists {
 		t.Error("expected project to still exist when confirmation not provided")
+	}
+}
+
+func TestSessionFlowRenameDefaultSuffix(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["command -v tmux"] = "/usr/bin/tmux"
+	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2"
+	runner.responses["tmux list-clients"] = ""
+	runner.responses["tmux rename-session"] = ""
+
+	// Rename session 1, accept default suffix (main), then quit
+	// Note: Due to bufio.Scanner buffering in ShowMenu, the Prompt for suffix
+	// receives EOF and uses the default. The empty line is consumed by the menu loop.
+	in := strings.NewReader("r\n1\nq\n")
+	out := &bytes.Buffer{}
+
+	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Renamed myapp → myapp-main") {
+		t.Errorf("expected rename success message, got: %s", output)
+	}
+}
+
+func TestRenameSessionCustomSuffix(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["tmux rename-session"] = ""
+
+	sessions := []tmux.Session{
+		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+	}
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Provide custom suffix "dev"
+	in := strings.NewReader("dev\n")
+	out := &bytes.Buffer{}
+
+	err := renameSession(in, out, runner, "myapp", item, sessions)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Renamed myapp → myapp-dev") {
+		t.Errorf("expected rename success message, got: %s", output)
+	}
+}
+
+func TestRenameSessionConflict(t *testing.T) {
+	runner := newMockRunner()
+
+	sessions := []tmux.Session{
+		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+		{Name: "myapp-dev", Project: "myapp", Path: "/home/user/myapp", Windows: 1, Verified: true},
+	}
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Try suffix "dev" which conflicts with existing myapp-dev
+	in := strings.NewReader("dev\n")
+	out := &bytes.Buffer{}
+
+	err := renameSession(in, out, runner, "myapp", item, sessions)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "already exists") {
+		t.Errorf("expected conflict error, got: %s", output)
 	}
 }
