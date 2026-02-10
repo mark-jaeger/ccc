@@ -286,6 +286,14 @@ func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, s
 		}
 	}
 
+	answer, err := ui.Confirm(in, out, fmt.Sprintf("Kill %s?", item.Key))
+	if err != nil {
+		return err
+	}
+	if !answer {
+		return nil
+	}
+
 	killCmd := tmux.BuildKillCommand(item.Key)
 	if _, err := runner.Run(killCmd); err != nil {
 		return fmt.Errorf("failed to kill session: %w", err)
@@ -295,8 +303,7 @@ func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, s
 }
 
 func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string, item ui.MenuItem, sessions []tmux.Session) error {
-	prompt := "New suffix (enter for 'main')"
-	suffix, err := ui.Prompt(in, out, prompt)
+	suffix, err := ui.Prompt(in, out, "New suffix (enter for 'main')")
 	if err != nil {
 		return err
 	}
@@ -306,17 +313,17 @@ func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string
 
 	newName := projectKey + "-" + suffix
 
-	// Check if new name conflicts with existing session
+	if newName == item.Key {
+		fmt.Fprintf(out, "  Session already named %s.\n", newName)
+		return nil
+	}
+
+	// Check if new name conflicts with a different existing session
 	for _, s := range sessions {
 		if s.Name == newName {
 			fmt.Fprintf(out, "  Session %s already exists.\n", newName)
 			return nil
 		}
-	}
-
-	// Check if new name equals old name (no-op)
-	if newName == item.Key {
-		return nil
 	}
 
 	renameCmd := tmux.BuildRenameCommand(item.Key, newName)
@@ -337,13 +344,18 @@ func deleteProject(in io.Reader, out io.Writer, projects *config.ProjectsConfig,
 		return nil
 	}
 
+	// Store for potential rollback
+	oldProject := projects.Projects[item.Key]
 	delete(projects.Projects, item.Key)
-	fmt.Fprintf(out, "  \u2713 Deleted %s\n", item.Key)
 
 	if onSave != nil {
 		if saveErr := onSave(projects); saveErr != nil {
-			fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+			// Rollback the in-memory deletion
+			projects.Projects[item.Key] = oldProject
+			return fmt.Errorf("failed to delete project: %w", saveErr)
 		}
 	}
+
+	fmt.Fprintf(out, "  \u2713 Deleted %s\n", item.Key)
 	return nil
 }

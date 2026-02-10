@@ -298,41 +298,44 @@ func TestCreateSessionNameMatchesProject(t *testing.T) {
 	}
 }
 
-func TestRemoveSessionSuccess(t *testing.T) {
+func TestKillSessionConfirmed(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// Two verified sessions
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
-	runner.responses["tmux list-clients"] = ""
 	runner.responses["tmux kill-session"] = ""
 
-	// Select kill, pick session 1, confirm
-	in := strings.NewReader("x\n1\ny\n")
+	sessions := []tmux.Session{
+		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+	}
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Confirm kill
+	in := strings.NewReader("y\n")
 	out := &bytes.Buffer{}
 
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	err := killSession(in, out, runner, item, sessions)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Killed session") {
-		t.Errorf("expected kill message, got: %s", out.String())
+	output := out.String()
+	if !strings.Contains(output, "Killed session myapp") {
+		t.Errorf("expected kill message, got: %s", output)
 	}
 }
 
-func TestRemoveSessionUnverifiedWarning(t *testing.T) {
+func TestKillSessionUnverifiedWarning(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// Two sessions: one verified, one unverified (prefix match)
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-extra||||||/tmp|||1"
-	runner.responses["tmux list-clients"] = ""
 	runner.responses["tmux kill-session"] = ""
 
-	// Select kill, pick session 2 (unverified), confirm
-	in := strings.NewReader("x\n2\ny\n")
+	sessions := []tmux.Session{
+		{Name: "myapp-extra", Project: "", Path: "/tmp", Windows: 1, Verified: false},
+	}
+	item := ui.MenuItem{Key: "myapp-extra", Label: "myapp-extra"}
+
+	// Confirm kill of unverified session
+	in := strings.NewReader("y\n")
 	out := &bytes.Buffer{}
 
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	err := killSession(in, out, runner, item, sessions)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,6 +343,33 @@ func TestRemoveSessionUnverifiedWarning(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "wasn't created by ccc") {
 		t.Errorf("expected unverified warning, got: %s", output)
+	}
+	if !strings.Contains(output, "Killed session") {
+		t.Errorf("expected kill message, got: %s", output)
+	}
+}
+
+func TestKillSessionDeclined(t *testing.T) {
+	runner := newMockRunner()
+	// Note: no kill-session response needed - command shouldn't be called
+
+	sessions := []tmux.Session{
+		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+	}
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Decline kill
+	in := strings.NewReader("n\n")
+	out := &bytes.Buffer{}
+
+	err := killSession(in, out, runner, item, sessions)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, "Killed") {
+		t.Errorf("should not show kill message when declined, got: %s", output)
 	}
 }
 
@@ -672,5 +702,42 @@ func TestDeleteProjectNoOnSave(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "Deleted myapp") {
 		t.Errorf("expected delete success message, got: %s", output)
+	}
+}
+
+func TestDeleteProjectSaveError(t *testing.T) {
+	projects := &config.ProjectsConfig{
+		Projects: map[string]config.Project{
+			"myapp": {Path: "/home/user/myapp"},
+		},
+	}
+
+	onSave := func(cfg *config.ProjectsConfig) error {
+		return fmt.Errorf("disk full")
+	}
+
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Confirm deletion but save fails
+	in := strings.NewReader("y\n")
+	out := &bytes.Buffer{}
+
+	err := deleteProject(in, out, projects, item, onSave)
+	if err == nil {
+		t.Fatal("expected error when save fails")
+	}
+	if !strings.Contains(err.Error(), "failed to delete project") {
+		t.Errorf("expected wrapped error, got: %v", err)
+	}
+
+	// Project should be rolled back (still exists)
+	if _, exists := projects.Projects["myapp"]; !exists {
+		t.Error("expected project to be rolled back after save failure")
+	}
+
+	// Should not show success message
+	output := out.String()
+	if strings.Contains(output, "Deleted") {
+		t.Errorf("should not show delete message on save failure, got: %s", output)
 	}
 }
