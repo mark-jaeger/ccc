@@ -335,3 +335,21 @@ func TestFilterSessionsExactNameUntagged(t *testing.T) {
 		t.Error("untagged session matched by name should have Verified=false")
 	}
 }
+
+func TestBuildRenameCommand(t *testing.T) {
+	cmd := BuildRenameCommand("old-name", "new-name")
+	expected := "tmux rename-session -t 'old-name' 'new-name'"
+	if cmd != expected {
+		t.Errorf("expected %q, got %q", expected, cmd)
+	}
+}
+
+func TestBuildRenameCommand_WithSocketOverride(t *testing.T) {
+	SocketOverride = "test-socket"
+	defer func() { SocketOverride = "" }()
+
+	cmd := BuildRenameCommand("old", "new")
+	if !strings.Contains(cmd, "-L 'test-socket'") {
+		t.Errorf("expected -L 'test-socket' in command, got: %s", cmd)
+	}
+}

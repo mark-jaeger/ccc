@@ -45,6 +45,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 			ShowBack: true,
 			ExtraActions: []ui.ExtraAction{
 				{Key: "s", Label: "Scan for projects", ID: "scan"},
+				{Key: "d", Label: "Delete project", ID: "delete", ItemAction: true},
 			},
 		})
 		if err != nil {
@@ -55,7 +56,8 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 		case ui.ActionQuit, ui.ActionBack:
 			return nil
 		case ui.ActionExtra:
-			if result.ExtraKey == "scan" {
+			switch result.ExtraKey {
+			case "scan":
 				if onScan == nil {
 					fmt.Fprintf(out, "\n  Scan not available in this mode.\n")
 					continue
@@ -73,6 +75,11 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 							fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
 						}
 					}
+				}
+				continue
+			case "delete":
+				if err := deleteProject(in, out, projects, result.Selected, onSave); err != nil {
+					return err
 				}
 				continue
 			}
@@ -141,10 +148,12 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 			Title:      fmt.Sprintf("Sessions for %s", projectKey),
 			Items:      items,
 			ShowBack:   true,
-			ShowRemove: true,
+			ShowRemove: false,
 			ExtraActions: []ui.ExtraAction{
-				{Key: "d", Label: "Detach clients", ID: "detach", ItemAction: true},
+				{Key: "t", Label: "Detach clients", ID: "detach", ItemAction: true},
 				{Key: "n", Label: "New session", ID: "new"},
+				{Key: "r", Label: "Rename session", ID: "rename", ItemAction: true},
+				{Key: "x", Label: "Kill session", ID: "kill", ItemAction: true},
 			},
 		})
 		if err != nil {
@@ -155,13 +164,23 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		case ui.ActionQuit, ui.ActionBack:
 			return nil
 		case ui.ActionExtra:
-			if result.ExtraKey == "detach" {
+			switch result.ExtraKey {
+			case "detach":
 				detachSessionClients(out, runner, result.Selected)
 				continue
+			case "kill":
+				if err := killSession(in, out, runner, result.Selected, sessions); err != nil {
+					return err
+				}
+				continue
+			case "rename":
+				if err := renameSession(in, out, runner, projectKey, result.Selected, sessions); err != nil {
+					return err
+				}
+				continue
+			case "new":
+				return createSession(in, out, runner, projectKey, projectPath, sessions)
 			}
-			return createSession(in, out, runner, projectKey, projectPath, sessions)
-		case ui.ActionRemove:
-			return removeSession(in, out, runner, result.Selected, sessions)
 		case ui.ActionSelect:
 			for _, s := range sessions {
 				if s.Name == result.Selected.Key {
@@ -259,7 +278,7 @@ func detachSessionClients(out io.Writer, runner Runner, item ui.MenuItem) {
 	}
 }
 
-func removeSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {
+func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {
 	for _, s := range sessions {
 		if s.Name == item.Key && !s.Verified {
 			fmt.Fprintf(out, "\n  Warning: session %q wasn't created by ccc.\n", s.Name)
@@ -267,10 +286,76 @@ func removeSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem,
 		}
 	}
 
+	answer, err := ui.Confirm(in, out, fmt.Sprintf("Kill %s?", item.Key))
+	if err != nil {
+		return err
+	}
+	if !answer {
+		return nil
+	}
+
 	killCmd := tmux.BuildKillCommand(item.Key)
 	if _, err := runner.Run(killCmd); err != nil {
 		return fmt.Errorf("failed to kill session: %w", err)
 	}
 	fmt.Fprintf(out, "  \u2713 Killed session %s\n", item.Key)
+	return nil
+}
+
+func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string, item ui.MenuItem, sessions []tmux.Session) error {
+	suffix, err := ui.Prompt(in, out, "New suffix (enter for 'main')")
+	if err != nil {
+		return err
+	}
+	if suffix == "" {
+		suffix = "main"
+	}
+
+	newName := projectKey + "-" + suffix
+
+	if newName == item.Key {
+		fmt.Fprintf(out, "  Session already named %s.\n", newName)
+		return nil
+	}
+
+	// Check if new name conflicts with a different existing session
+	for _, s := range sessions {
+		if s.Name == newName {
+			fmt.Fprintf(out, "  Session %s already exists.\n", newName)
+			return nil
+		}
+	}
+
+	renameCmd := tmux.BuildRenameCommand(item.Key, newName)
+	if _, err := runner.Run(renameCmd); err != nil {
+		return fmt.Errorf("failed to rename session: %w", err)
+	}
+
+	fmt.Fprintf(out, "  \u2713 Renamed %s \u2192 %s\n", item.Key, newName)
+	return nil
+}
+
+func deleteProject(in io.Reader, out io.Writer, projects *config.ProjectsConfig, item ui.MenuItem, onSave func(*config.ProjectsConfig) error) error {
+	answer, err := ui.Confirm(in, out, fmt.Sprintf("Delete %s?", item.Key))
+	if err != nil {
+		return err
+	}
+	if !answer {
+		return nil
+	}
+
+	// Store for potential rollback
+	oldProject := projects.Projects[item.Key]
+	delete(projects.Projects, item.Key)
+
+	if onSave != nil {
+		if saveErr := onSave(projects); saveErr != nil {
+			// Rollback the in-memory deletion
+			projects.Projects[item.Key] = oldProject
+			return fmt.Errorf("failed to delete project: %w", saveErr)
+		}
+	}
+
+	fmt.Fprintf(out, "  \u2713 Deleted %s\n", item.Key)
 	return nil
 }
