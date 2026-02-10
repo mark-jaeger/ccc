@@ -26,6 +26,13 @@ func ConnectionFromHost(h config.Host) *Connection {
 	}
 }
 
+// WithAddress returns a copy of the connection with a different address.
+func (c *Connection) WithAddress(addr string) *Connection {
+	copy := *c
+	copy.Address = addr
+	return &copy
+}
+
 // Connection holds SSH connection parameters.
 type Connection struct {
 	User         string

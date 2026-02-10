@@ -17,12 +17,13 @@ var ErrNoConfig = errors.New("config file not found")
 
 // Host represents connection details for a remote host.
 type Host struct {
-	User         string   `toml:"user"`
-	Address      string   `toml:"address"`
-	Port         int      `toml:"port,omitempty"`
-	IdentityFile string   `toml:"identity_file,omitempty"`
-	ProxyJump    string   `toml:"proxy_jump,omitempty"`
-	SSHOptions   []string `toml:"ssh_options,omitempty"`
+	User              string   `toml:"user"`
+	Address           string   `toml:"address"`
+	Port              int      `toml:"port,omitempty"`
+	IdentityFile      string   `toml:"identity_file,omitempty"`
+	ProxyJump         string   `toml:"proxy_jump,omitempty"`
+	SSHOptions        []string `toml:"ssh_options,omitempty"`
+	FallbackAddresses []string `toml:"fallback_addresses,omitempty"`
 }
 
 // ClientConfig holds the client-side configuration including known hosts.

@@ -31,13 +31,13 @@ func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
 		for name := range cfg.Hosts {
 			hostName = name
 		}
-		return connectToHost(in, out, cfg, hostName, args)
+		return connectToHost(in, out, cfg, cfgPath, hostName, args)
 	}
 
 	// Shortcut: ccc <host> <project> [new]
 	if len(args) >= 2 {
 		if _, ok := cfg.Hosts[args[0]]; ok {
-			return connectToHost(in, out, cfg, args[0], args[1:])
+			return connectToHost(in, out, cfg, cfgPath, args[0], args[1:])
 		}
 	}
 
@@ -53,7 +53,7 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 
 		// Auto-skip single host
 		if len(names) == 1 && len(args) == 0 {
-			return connectToHost(in, out, cfg, names[0], nil)
+			return connectToHost(in, out, cfg, cfgPath, names[0], nil)
 		}
 
 		items := make([]ui.MenuItem, len(names))
@@ -100,7 +100,7 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 			}
 			continue
 		case ui.ActionSelect:
-			if err := connectToHost(in, out, cfg, result.Selected.Key, nil); err != nil {
+			if err := connectToHost(in, out, cfg, cfgPath, result.Selected.Key, nil); err != nil {
 				fmt.Fprintf(out, "\n  Error: %v\n", err)
 				continue
 			}
@@ -109,7 +109,7 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 	}
 }
 
-func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostName string, args []string) error {
+func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPath string, hostName string, args []string) error {
 	host, ok := cfg.Hosts[hostName]
 	if !ok {
 		return fmt.Errorf("unknown host: %s", hostName)
@@ -119,13 +119,30 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 
 	fmt.Fprintf(out, "\n  Connecting to %s...\n", hostName)
 
+	// Try primary address, then fallbacks if available
+	if err := conn.TestConnection(); err != nil {
+		fmt.Fprintf(out, "  Connection to %s failed: %v\n", host.Address, err)
+
+		conn = tryFallbackAddresses(out, conn, host.FallbackAddresses)
+
+		if conn == nil {
+			var addErr error
+			conn, addErr = offerAddFallback(in, out, cfg, cfgPath, hostName, host)
+			if addErr != nil {
+				return addErr
+			}
+		}
+
+		if conn == nil {
+			return fmt.Errorf("cannot reach %s: all addresses failed", hostName)
+		}
+	}
+
+	fmt.Fprintf(out, "  ✓ Connected.\n")
+
 	// Read projects config from host
 	projectsData, err := conn.Run("cat ~/.ccc/projects.toml")
 	if err != nil {
-		// Check if it's a connection issue or missing file
-		if testErr := conn.TestConnection(); testErr != nil {
-			return fmt.Errorf("cannot reach %s: %w", hostName, testErr)
-		}
 		// File missing → trigger scan
 		fmt.Fprintf(out, "  No projects configured on %s.\n", hostName)
 		return runRemoteScan(in, out, conn, hostName)
@@ -153,6 +170,76 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, hostNa
 	}
 	saveFn := remoteSaveFn(conn)
 	return ProjectFlow(in, out, conn, projects, scanFn, saveFn)
+}
+
+// tryFallbackAddresses attempts each fallback address in order and returns
+// the first working connection, or nil if none are available or all fail.
+func tryFallbackAddresses(out io.Writer, conn *sshpkg.Connection, addrs []string) *sshpkg.Connection {
+	if len(addrs) == 0 {
+		return nil
+	}
+	for _, addr := range addrs {
+		fmt.Fprintf(out, "  Trying %s...\n", addr)
+		fallback := conn.WithAddress(addr)
+		if err := fallback.TestConnection(); err != nil {
+			fmt.Fprintf(out, "  %s failed: %v\n", addr, err)
+			continue
+		}
+		return fallback
+	}
+	return nil
+}
+
+// offerAddFallback prompts the user to enter a new fallback address, saves it
+// to config, and returns a working connection if the address is reachable.
+func offerAddFallback(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPath string, hostName string, host config.Host) (*sshpkg.Connection, error) {
+	addFallback, err := ui.Confirm(in, out, "Add a fallback address for next time?")
+	if err != nil {
+		return nil, err
+	}
+	if !addFallback {
+		return nil, nil
+	}
+
+	addr, err := ui.Prompt(in, out, "Fallback address (IP or hostname)")
+	if err != nil {
+		return nil, err
+	}
+	if addr == "" {
+		return nil, nil
+	}
+
+	// Check for duplicate before saving
+	isDuplicate := addr == host.Address
+	for _, existing := range host.FallbackAddresses {
+		if existing == addr {
+			isDuplicate = true
+			break
+		}
+	}
+
+	if isDuplicate {
+		fmt.Fprintf(out, "  Address already configured.\n")
+	} else {
+		// Save the fallback regardless of whether it works (user might fix it later)
+		host.FallbackAddresses = append(host.FallbackAddresses, addr)
+		cfg.AddHost(hostName, host)
+		if saveErr := config.SaveClientConfig(cfgPath, cfg); saveErr != nil {
+			fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+		} else {
+			fmt.Fprintf(out, "  Fallback saved.\n")
+		}
+	}
+
+	// Test the new address
+	fmt.Fprintf(out, "  Testing %s...\n", addr)
+	conn := sshpkg.ConnectionFromHost(host).WithAddress(addr)
+	if testErr := conn.TestConnection(); testErr != nil {
+		fmt.Fprintf(out, "  %s failed: %v\n", addr, testErr)
+		return nil, nil
+	}
+
+	return conn, nil
 }
 
 func remoteSaveFn(conn *sshpkg.Connection) func(*config.ProjectsConfig) error {
