@@ -141,10 +141,11 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 			Title:      fmt.Sprintf("Sessions for %s", projectKey),
 			Items:      items,
 			ShowBack:   true,
-			ShowRemove: true,
+			ShowRemove: false,
 			ExtraActions: []ui.ExtraAction{
-				{Key: "d", Label: "Detach clients", ID: "detach", ItemAction: true},
+				{Key: "t", Label: "Detach clients", ID: "detach", ItemAction: true},
 				{Key: "n", Label: "New session", ID: "new"},
+				{Key: "x", Label: "Kill session", ID: "kill", ItemAction: true},
 			},
 		})
 		if err != nil {
@@ -155,13 +156,18 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		case ui.ActionQuit, ui.ActionBack:
 			return nil
 		case ui.ActionExtra:
-			if result.ExtraKey == "detach" {
+			switch result.ExtraKey {
+			case "detach":
 				detachSessionClients(out, runner, result.Selected)
 				continue
+			case "kill":
+				if err := killSession(in, out, runner, result.Selected, sessions); err != nil {
+					return err
+				}
+				continue
+			case "new":
+				return createSession(in, out, runner, projectKey, projectPath, sessions)
 			}
-			return createSession(in, out, runner, projectKey, projectPath, sessions)
-		case ui.ActionRemove:
-			return removeSession(in, out, runner, result.Selected, sessions)
 		case ui.ActionSelect:
 			for _, s := range sessions {
 				if s.Name == result.Selected.Key {
@@ -259,7 +265,7 @@ func detachSessionClients(out io.Writer, runner Runner, item ui.MenuItem) {
 	}
 }
 
-func removeSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {
+func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {
 	for _, s := range sessions {
 		if s.Name == item.Key && !s.Verified {
 			fmt.Fprintf(out, "\n  Warning: session %q wasn't created by ccc.\n", s.Name)

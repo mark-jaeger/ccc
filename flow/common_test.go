@@ -304,8 +304,8 @@ func TestRemoveSessionSuccess(t *testing.T) {
 	runner.responses["tmux list-clients"] = ""
 	runner.responses["tmux kill-session"] = ""
 
-	// Select remove, pick session 1, confirm
-	in := strings.NewReader("r\n1\ny\n")
+	// Select kill, pick session 1, confirm
+	in := strings.NewReader("x\n1\ny\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -326,8 +326,8 @@ func TestRemoveSessionUnverifiedWarning(t *testing.T) {
 	runner.responses["tmux list-clients"] = ""
 	runner.responses["tmux kill-session"] = ""
 
-	// Select remove, pick session 2 (unverified), confirm
-	in := strings.NewReader("r\n2\ny\n")
+	// Select kill, pick session 2 (unverified), confirm
+	in := strings.NewReader("x\n2\ny\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -401,7 +401,7 @@ func TestSessionFlowDetachNoClients(t *testing.T) {
 	runner.responses["tmux list-clients"] = ""
 
 	// Detach session 1 (no clients), then quit
-	in := strings.NewReader("d\n1\nq\n")
+	in := strings.NewReader("t\n1\nq\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -427,7 +427,7 @@ func TestSessionFlowDetachWithClients(t *testing.T) {
 	runner.responses["tmux detach-client"] = ""
 
 	// Detach session 1 (has a client), then quit
-	in := strings.NewReader("d\n1\nq\n")
+	in := strings.NewReader("t\n1\nq\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
