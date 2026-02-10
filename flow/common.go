@@ -45,6 +45,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 			ShowBack: true,
 			ExtraActions: []ui.ExtraAction{
 				{Key: "s", Label: "Scan for projects", ID: "scan"},
+				{Key: "d", Label: "Delete project", ID: "delete", ItemAction: true},
 			},
 		})
 		if err != nil {
@@ -55,7 +56,8 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 		case ui.ActionQuit, ui.ActionBack:
 			return nil
 		case ui.ActionExtra:
-			if result.ExtraKey == "scan" {
+			switch result.ExtraKey {
+			case "scan":
 				if onScan == nil {
 					fmt.Fprintf(out, "\n  Scan not available in this mode.\n")
 					continue
@@ -73,6 +75,11 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 							fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
 						}
 					}
+				}
+				continue
+			case "delete":
+				if err := deleteProject(in, out, projects, result.Selected, onSave); err != nil {
+					return err
 				}
 				continue
 			}
@@ -318,5 +325,25 @@ func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string
 	}
 
 	fmt.Fprintf(out, "  \u2713 Renamed %s \u2192 %s\n", item.Key, newName)
+	return nil
+}
+
+func deleteProject(in io.Reader, out io.Writer, projects *config.ProjectsConfig, item ui.MenuItem, onSave func(*config.ProjectsConfig) error) error {
+	answer, err := ui.Confirm(in, out, fmt.Sprintf("Delete %s?", item.Key))
+	if err != nil {
+		return err
+	}
+	if !answer {
+		return nil
+	}
+
+	delete(projects.Projects, item.Key)
+	fmt.Fprintf(out, "  \u2713 Deleted %s\n", item.Key)
+
+	if onSave != nil {
+		if saveErr := onSave(projects); saveErr != nil {
+			fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+		}
+	}
 	return nil
 }

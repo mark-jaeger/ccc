@@ -569,3 +569,108 @@ func TestRenameSessionConflict(t *testing.T) {
 		t.Errorf("expected conflict error, got: %s", output)
 	}
 }
+
+func TestDeleteProjectConfirmed(t *testing.T) {
+	saveCalled := false
+	var savedConfig *config.ProjectsConfig
+
+	projects := &config.ProjectsConfig{
+		Projects: map[string]config.Project{
+			"myapp": {Path: "/home/user/myapp"},
+			"other": {Path: "/home/user/other"},
+		},
+	}
+
+	onSave := func(cfg *config.ProjectsConfig) error {
+		saveCalled = true
+		savedConfig = cfg
+		return nil
+	}
+
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Confirm deletion
+	in := strings.NewReader("y\n")
+	out := &bytes.Buffer{}
+
+	err := deleteProject(in, out, projects, item, onSave)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Deleted myapp") {
+		t.Errorf("expected delete success message, got: %s", output)
+	}
+
+	if !saveCalled {
+		t.Error("expected onSave to be called")
+	}
+
+	if len(savedConfig.Projects) != 1 {
+		t.Errorf("expected 1 project remaining, got %d", len(savedConfig.Projects))
+	}
+
+	if _, exists := savedConfig.Projects["myapp"]; exists {
+		t.Error("expected myapp to be deleted")
+	}
+}
+
+func TestDeleteProjectDeclined(t *testing.T) {
+	projects := &config.ProjectsConfig{
+		Projects: map[string]config.Project{
+			"myapp": {Path: "/home/user/myapp"},
+		},
+	}
+
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Decline deletion
+	in := strings.NewReader("n\n")
+	out := &bytes.Buffer{}
+
+	err := deleteProject(in, out, projects, item, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Project should still exist
+	if _, exists := projects.Projects["myapp"]; !exists {
+		t.Error("expected project to still exist after declining delete")
+	}
+
+	// Should not show success message
+	output := out.String()
+	if strings.Contains(output, "Deleted") {
+		t.Errorf("should not show delete message when declined, got: %s", output)
+	}
+}
+
+func TestDeleteProjectNoOnSave(t *testing.T) {
+	projects := &config.ProjectsConfig{
+		Projects: map[string]config.Project{
+			"myapp": {Path: "/home/user/myapp"},
+		},
+	}
+
+	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+
+	// Confirm deletion with nil onSave
+	in := strings.NewReader("y\n")
+	out := &bytes.Buffer{}
+
+	err := deleteProject(in, out, projects, item, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Project should be deleted from map
+	if _, exists := projects.Projects["myapp"]; exists {
+		t.Error("expected project to be deleted")
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Deleted myapp") {
+		t.Errorf("expected delete success message, got: %s", output)
+	}
+}
