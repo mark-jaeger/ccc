@@ -271,5 +271,11 @@ func runRemoteScan(in io.Reader, out io.Writer, conn *sshpkg.Connection, hostNam
 		return RunScanFlow(in, out, conn, hostName)
 	}
 	saveFn := remoteSaveFn(conn)
+
+	// Save initial scan results immediately
+	if saveErr := saveFn(projects); saveErr != nil {
+		fmt.Fprintf(out, "  Warning: could not save config: %v\n", saveErr)
+	}
+
 	return ProjectFlow(in, out, conn, projects, scanFn, saveFn)
 }
