@@ -17,9 +17,9 @@
 ### Migration
 
 - [x] **MIGR-01**: Replace tmux package with abduco package
-- [ ] **MIGR-02**: Remove client negotiation from attach flow
-- [ ] **MIGR-03**: Remove passthrough/bell configuration
-- [ ] **MIGR-04**: Update flow layer to use abduco commands
+- [x] **MIGR-02**: Remove client negotiation from attach flow
+- [x] **MIGR-03**: Remove passthrough/bell configuration
+- [x] **MIGR-04**: Update flow layer to use abduco commands
 - [ ] **MIGR-05**: Delete tmux package after migration complete
 
 ### Error Handling
@@ -55,9 +55,9 @@
 | SESS-05 | Phase 1 | Complete |
 | SESS-06 | Phase 1 | Complete |
 | MIGR-01 | Phase 1 | Complete |
-| MIGR-02 | Phase 2 | Pending |
-| MIGR-03 | Phase 2 | Pending |
-| MIGR-04 | Phase 2 | Pending |
+| MIGR-02 | Phase 2 | Complete |
+| MIGR-03 | Phase 2 | Complete |
+| MIGR-04 | Phase 2 | Complete |
 | MIGR-05 | Phase 2 | Pending |
 | ERRH-01 | Phase 1 | Complete |
 | ERRH-02 | Phase 1 | Complete |
@@ -69,4 +69,4 @@
 
 ---
 *Requirements defined: 2026-03-10*
-*Last updated: 2026-03-10 after Plan 01-02 completion (Phase 1 complete)*
+*Last updated: 2026-03-10 after Plan 02-01 completion (MIGR-02, MIGR-03, MIGR-04 complete)*
