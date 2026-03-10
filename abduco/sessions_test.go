@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuildCreateCommand(t *testing.T) {
 	got := BuildCreateCommand("ccc.rt1.main", "/home/user/proj", "")
-	want := "cd '/home/user/proj' && abduco -n 'ccc.rt1.main' zsh"
+	want := "cd '/home/user/proj' && abduco -n 'ccc.rt1.main' $SHELL"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
@@ -12,7 +12,7 @@ func TestBuildCreateCommand(t *testing.T) {
 
 func TestBuildCreateCommand_WithSpecialChars(t *testing.T) {
 	got := BuildCreateCommand("ccc.rt1.main", "/home/user/project's dir", "")
-	want := "cd '/home/user/project'\\''s dir' && abduco -n 'ccc.rt1.main' zsh"
+	want := "cd '/home/user/project'\\''s dir' && abduco -n 'ccc.rt1.main' $SHELL"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
@@ -20,7 +20,7 @@ func TestBuildCreateCommand_WithSpecialChars(t *testing.T) {
 
 func TestBuildCreateCommand_WithDetachKey(t *testing.T) {
 	got := BuildCreateCommand("ccc.rt1.main", "/home/user/proj", "^a")
-	want := "cd '/home/user/proj' && abduco -e '^a' -n 'ccc.rt1.main' zsh"
+	want := "cd '/home/user/proj' && abduco -e '^a' -n 'ccc.rt1.main' $SHELL"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
