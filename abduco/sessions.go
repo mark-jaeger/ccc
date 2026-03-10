@@ -29,14 +29,14 @@ type Session struct {
 }
 
 // BuildCreateCommand returns a shell command that creates a new abduco session.
-// The session starts the user's default shell ($SHELL) in the specified path.
+// The session starts bash in the specified path.
 // If detachKey is non-empty, it's passed as the -e flag (e.g., "^a" for Ctrl+a).
 func BuildCreateCommand(name, path, detachKey string) string {
 	if detachKey != "" {
-		return fmt.Sprintf("cd %s && abduco -e %s -n %s $SHELL",
+		return fmt.Sprintf("cd %s && abduco -e %s -n %s bash",
 			shellutil.Quote(path), shellutil.Quote(detachKey), shellutil.Quote(name))
 	}
-	return fmt.Sprintf("cd %s && abduco -n %s $SHELL",
+	return fmt.Sprintf("cd %s && abduco -n %s bash",
 		shellutil.Quote(path), shellutil.Quote(name))
 }
 
