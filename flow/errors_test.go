@@ -7,70 +7,70 @@ import (
 	"testing"
 )
 
-func TestCheckTmuxFound(t *testing.T) {
+func TestCheckAbducoFound(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, runner)
+	err := CheckAbduco(in, out, runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestCheckTmuxNotFoundThenInstalled(t *testing.T) {
+func TestCheckAbducoNotFoundThenInstalled(t *testing.T) {
 	runner := newMockRunner()
 
 	// First call fails, second succeeds (after shell)
 	callCount := 0
 	origRun := runner.Run
 	_ = origRun
-	// Override Run to track call count for "command -v tmux"
+	// Override Run to track call count for "command -v abduco"
 	runner.responses["uname -s"] = "Linux"
 
-	customRunner := &checkTmuxRunner{
-		mockRunner: runner,
-		tmuxCalls:  0,
+	customRunner := &checkAbducoRunner{
+		mockRunner:   runner,
+		abducoCalls: 0,
 	}
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, customRunner)
+	err := CheckAbduco(in, out, customRunner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out.String(), "tmux found") {
-		t.Errorf("expected 'tmux found' after recheck, got: %s", out.String())
+	if !strings.Contains(out.String(), "abduco found") {
+		t.Errorf("expected 'abduco found' after recheck, got: %s", out.String())
 	}
 	_ = callCount
 }
 
-// checkTmuxRunner fails the first "command -v tmux" call and succeeds on the second.
-type checkTmuxRunner struct {
+// checkAbducoRunner fails the first "command -v abduco" call and succeeds on the second.
+type checkAbducoRunner struct {
 	*mockRunner
-	tmuxCalls int
+	abducoCalls int
 }
 
-func (r *checkTmuxRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v tmux") {
-		r.tmuxCalls++
-		if r.tmuxCalls == 1 {
+func (r *checkAbducoRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v abduco") {
+		r.abducoCalls++
+		if r.abducoCalls == 1 {
 			return "", fmt.Errorf("not found")
 		}
-		return "/usr/bin/tmux", nil
+		return "/usr/bin/abduco", nil
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *checkTmuxRunner) RunInteractive(cmd string) error {
+func (r *checkAbducoRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckTmuxNotFoundAfterRetry(t *testing.T) {
-	runner := &alwaysFailTmuxRunner{
+func TestCheckAbducoNotFoundAfterRetry(t *testing.T) {
+	runner := &alwaysFailAbducoRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Linux"
@@ -78,32 +78,32 @@ func TestCheckTmuxNotFoundAfterRetry(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, runner)
+	err := CheckAbduco(in, out, runner)
 	if err == nil {
-		t.Fatal("expected error when tmux is never found")
+		t.Fatal("expected error when abduco is never found")
 	}
-	if !strings.Contains(err.Error(), "tmux not installed") {
-		t.Errorf("expected 'tmux not installed' error, got: %v", err)
+	if !strings.Contains(err.Error(), "abduco not installed") {
+		t.Errorf("expected 'abduco not installed' error, got: %v", err)
 	}
 }
 
-type alwaysFailTmuxRunner struct {
+type alwaysFailAbducoRunner struct {
 	*mockRunner
 }
 
-func (r *alwaysFailTmuxRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v tmux") {
+func (r *alwaysFailAbducoRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v abduco") {
 		return "", fmt.Errorf("not found")
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *alwaysFailTmuxRunner) RunInteractive(cmd string) error {
+func (r *alwaysFailAbducoRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckTmuxDarwinHint(t *testing.T) {
-	runner := &alwaysFailTmuxRunner{
+func TestCheckAbducoDarwinHint(t *testing.T) {
+	runner := &alwaysFailAbducoRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Darwin"
@@ -111,10 +111,10 @@ func TestCheckTmuxDarwinHint(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	_ = CheckTmux(in, out, runner)
+	_ = CheckAbduco(in, out, runner)
 
 	output := out.String()
-	if !strings.Contains(output, "brew install tmux") {
+	if !strings.Contains(output, "brew install abduco") {
 		t.Errorf("expected brew hint for Darwin, got: %s", output)
 	}
 	// On Darwin, should NOT show Ubuntu/Fedora hints
