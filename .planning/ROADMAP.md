@@ -9,7 +9,7 @@
 | # | Phase | Goal | Requirements | Plans | Status |
 |---|-------|------|--------------|-------|--------|
 | 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 2/2 | Complete |
-| 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | 1/2 | In Progress |
+| 2 | flow-migration | Update flow layer to use abduco, remove tmux | MIGR-02..05 | 2/2 | Complete |
 
 ---
 
@@ -41,11 +41,11 @@ Plans:
 
 **Requirements:** MIGR-02, MIGR-03, MIGR-04, MIGR-05
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 02-01-PLAN.md — Migrate flow package (common.go, errors.go, tests)
-- [ ] 02-02-PLAN.md — Delete tmux package and update documentation
+- [x] 02-02-PLAN.md — Delete tmux package and update documentation
 
 **Success Criteria:**
 1. `flow/common.go` imports `abduco` instead of `tmux`

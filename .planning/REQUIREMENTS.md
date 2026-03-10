@@ -20,7 +20,7 @@
 - [x] **MIGR-02**: Remove client negotiation from attach flow
 - [x] **MIGR-03**: Remove passthrough/bell configuration
 - [x] **MIGR-04**: Update flow layer to use abduco commands
-- [ ] **MIGR-05**: Delete tmux package after migration complete
+- [x] **MIGR-05**: Delete tmux package after migration complete
 
 ### Error Handling
 
@@ -58,7 +58,7 @@
 | MIGR-02 | Phase 2 | Complete |
 | MIGR-03 | Phase 2 | Complete |
 | MIGR-04 | Phase 2 | Complete |
-| MIGR-05 | Phase 2 | Pending |
+| MIGR-05 | Phase 2 | Complete |
 | ERRH-01 | Phase 1 | Complete |
 | ERRH-02 | Phase 1 | Complete |
 
