@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
+milestone_name: abduco migration
 current_plan: Not started
-status: completed
-last_updated: "2026-03-10T14:58:28.257Z"
+status: archived
+last_updated: "2026-03-10T16:30:00Z"
 progress:
   total_phases: 2
   completed_phases: 2
@@ -19,14 +19,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-10)
 
 **Core value:** Transparent terminal passthrough
-**Current focus:** Migration complete
+**Current focus:** v1.0 shipped — planning next milestone
 
 ## Current Position
 
 - **Milestone:** v1.0
 - **Phase:** 2 of 2 (flow-migration)
 - **Current Plan:** Not started
-- **Status:** Milestone complete
+- **Status:** v1.0 milestone complete
 
 ## Key Decisions
 
