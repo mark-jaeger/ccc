@@ -1,10 +1,15 @@
 ---
+gsd_state_version: 1.0
 milestone: v1.0
-phase: 1
-phase_name: abduco-package
-status: complete
-plans_complete: 2
-plans_total: 2
+milestone_name: milestone
+current_plan: Not started
+status: planning
+last_updated: "2026-03-10T14:12:50.556Z"
+progress:
+  total_phases: 2
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State: ccc abduco migration
@@ -20,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-03-10)
 
 - **Milestone:** v1.0
 - **Phase:** 1 of 2 (abduco-package)
-- **Current Plan:** 2 of 2 (complete)
-- **Status:** Phase 1 complete
+- **Current Plan:** Not started
+- **Status:** Ready to plan
 
 ## Key Decisions
 
