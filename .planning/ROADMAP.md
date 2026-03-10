@@ -6,10 +6,10 @@
 
 ## Progress
 
-| # | Phase | Goal | Requirements | Status |
-|---|-------|------|--------------|--------|
-| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | ○ Pending |
-| 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | ○ Pending |
+| # | Phase | Goal | Requirements | Plans | Status |
+|---|-------|------|--------------|-------|--------|
+| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 1/2 | ◐ In Progress |
+| 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | 0/? | ○ Pending |
 
 ---
 
@@ -22,7 +22,7 @@
 **Plans:** 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Core package (Session struct, command builders, parser, helpers)
+- [x] 01-01-PLAN.md — Core package (Session struct, command builders, parser, helpers)
 - [ ] 01-02-PLAN.md — Unit tests and integration test scaffolding
 
 **Success Criteria:**

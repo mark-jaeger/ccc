@@ -7,16 +7,16 @@
 
 ### Session Management
 
-- [ ] **SESS-01**: Create abduco session with `ccc.{project}.{suffix}` naming
-- [ ] **SESS-02**: List sessions filtering by project prefix
-- [ ] **SESS-03**: Attach to session (auto-detaches previous client)
-- [ ] **SESS-04**: Kill session using PID from list output
-- [ ] **SESS-05**: Show external (non-ccc) abduco sessions marked as "(external)"
-- [ ] **SESS-06**: Handle dead sessions (`+` status) in list output
+- [x] **SESS-01**: Create abduco session with `ccc.{project}.{suffix}` naming
+- [x] **SESS-02**: List sessions filtering by project prefix
+- [x] **SESS-03**: Attach to session (auto-detaches previous client)
+- [x] **SESS-04**: Kill session using PID from list output
+- [x] **SESS-05**: Show external (non-ccc) abduco sessions marked as "(external)"
+- [x] **SESS-06**: Handle dead sessions (`+` status) in list output
 
 ### Migration
 
-- [ ] **MIGR-01**: Replace tmux package with abduco package
+- [x] **MIGR-01**: Replace tmux package with abduco package
 - [ ] **MIGR-02**: Remove client negotiation from attach flow
 - [ ] **MIGR-03**: Remove passthrough/bell configuration
 - [ ] **MIGR-04**: Update flow layer to use abduco commands
@@ -24,8 +24,8 @@
 
 ### Error Handling
 
-- [ ] **ERRH-01**: Clear error when abduco not installed
-- [ ] **ERRH-02**: Handle stderr output from abduco (2>&1 redirect)
+- [x] **ERRH-01**: Clear error when abduco not installed
+- [x] **ERRH-02**: Handle stderr output from abduco (2>&1 redirect)
 
 ## v2 Requirements
 
@@ -48,19 +48,19 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SESS-01 | Phase 1 | Pending |
-| SESS-02 | Phase 1 | Pending |
-| SESS-03 | Phase 1 | Pending |
-| SESS-04 | Phase 1 | Pending |
-| SESS-05 | Phase 1 | Pending |
-| SESS-06 | Phase 1 | Pending |
-| MIGR-01 | Phase 1 | Pending |
+| SESS-01 | Phase 1 | Complete |
+| SESS-02 | Phase 1 | Complete |
+| SESS-03 | Phase 1 | Complete |
+| SESS-04 | Phase 1 | Complete |
+| SESS-05 | Phase 1 | Complete |
+| SESS-06 | Phase 1 | Complete |
+| MIGR-01 | Phase 1 | Complete |
 | MIGR-02 | Phase 2 | Pending |
 | MIGR-03 | Phase 2 | Pending |
 | MIGR-04 | Phase 2 | Pending |
 | MIGR-05 | Phase 2 | Pending |
-| ERRH-01 | Phase 1 | Pending |
-| ERRH-02 | Phase 1 | Pending |
+| ERRH-01 | Phase 1 | Complete |
+| ERRH-02 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 13 total
@@ -69,4 +69,4 @@
 
 ---
 *Requirements defined: 2026-03-10*
-*Last updated: 2026-03-10 after initial definition*
+*Last updated: 2026-03-10 after Plan 01-01 completion*
