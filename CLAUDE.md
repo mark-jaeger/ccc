@@ -16,15 +16,15 @@ No Makefile or linter config exists. CI runs via GitHub Actions on tag pushes (`
 
 ## Architecture
 
-ccc is a CLI tool for managing tmux sessions on local and remote machines over SSH. It has two modes: **remote** (default, connects via SSH) and **local** (operates directly on the current machine, auto-detected when running inside an SSH session).
+ccc is a CLI tool for managing abduco sessions on local and remote machines over SSH. It has two modes: **remote** (default, connects via SSH) and **local** (operates directly on the current machine, auto-detected when running inside an SSH session).
 
 ### Package Dependency Graph
 
 ```
-main → flow → config, ssh, tmux, scan, ui, tailscale
+main → flow → config, ssh, abduco, scan, ui, tailscale
                 ssh → config, internal/shellutil
                scan → internal/shellutil
-               tmux → internal/shellutil
+             abduco → internal/shellutil
 ```
 
 ### Core Abstraction: Runner Interface
@@ -38,21 +38,21 @@ type Runner interface {
 }
 ```
 
-Implementations: `ssh.Connection` (remote) and `flow.LocalRunner` (local). All tmux and scan commands are built as shell strings and executed through this interface.
+Implementations: `ssh.Connection` (remote) and `flow.LocalRunner` (local). All abduco and scan commands are built as shell strings and executed through this interface.
 
 ### Control Flow
 
-`main.go` → version flag check → mode detection → `RunRemoteMode` or `RunLocalMode` → `ProjectFlow` (project menu loop) → `SessionFlow` (session menu loop) → tmux attach/create.
+`main.go` → version flag check → mode detection → `RunRemoteMode` or `RunLocalMode` → `ProjectFlow` (project menu loop) → `SessionFlow` (session menu loop) → abduco attach/create.
 
 Remote mode adds: host config loading → host selection loop → SSH connection → project config read from host.
 
 ### Key Design Patterns
 
-- **Command building**: Packages (`tmux`, `scan`) export `Build*Command()` functions returning shell strings. All user-controlled values are quoted via `shellutil.Quote()`. Commands are executed through `Runner`, not `os/exec` directly (except in `Runner` implementations).
+- **Command building**: Packages (`abduco`, `scan`) export `Build*Command()` functions returning shell strings. All user-controlled values are quoted via `shellutil.Quote()`. Commands are executed through `Runner`, not `os/exec` directly (except in `Runner` implementations).
 
 - **Scan fallback chain**: `scan.BuildScanChainCommand()` tries mdfind → plocate → locate → fd → find, guarded by `command -v`, using the first tool that produces non-empty output.
 
-- **Session metadata**: tmux sessions are tagged with `@ccc_project` and `@ccc_path` user options. `FilterSessionsForProject` matches by metadata first (Verified=true), then by name prefix (Verified=false, shown with warning).
+- **Session naming**: abduco sessions use `ccc.{project}.{suffix}` naming convention. `FilterSessionsForProject` matches by Project field, with External sessions (non-ccc prefix) shown with warning.
 
 - **Config split**: Client-side config (`~/.ccc/config.toml`) stores host definitions locally. Project config (`~/.ccc/projects.toml`) lives on the target machine and is read via SSH in remote mode.
 
