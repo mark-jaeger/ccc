@@ -61,7 +61,7 @@ func TestIntegrationCreateAndList(t *testing.T) {
 	}()
 
 	// Create session using the command builder
-	createCmd := abduco.BuildCreateCommand(sessionName, "/tmp")
+	createCmd := abduco.BuildCreateCommand(sessionName, "/tmp", "")
 	_, err := runCommand(createCmd)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
@@ -104,7 +104,7 @@ func TestIntegrationKillSession(t *testing.T) {
 	sessionName := fmt.Sprintf("ccc.testkill.%d", time.Now().UnixNano())
 
 	// Create session
-	createCmd := abduco.BuildCreateCommand(sessionName, "/tmp")
+	createCmd := abduco.BuildCreateCommand(sessionName, "/tmp", "")
 	_, err := runCommand(createCmd)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
@@ -177,7 +177,7 @@ func TestIntegrationFilterForProject(t *testing.T) {
 
 	// Create sessions
 	for _, name := range []string{session1, session2, externalSession} {
-		cmd := abduco.BuildCreateCommand(name, "/tmp")
+		cmd := abduco.BuildCreateCommand(name, "/tmp", "")
 		_, err := runCommand(cmd)
 		if err != nil {
 			t.Fatalf("Failed to create session %q: %v", name, err)

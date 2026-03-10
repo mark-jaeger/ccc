@@ -66,7 +66,7 @@ func TestProjectFlow_AttachExistingSession(t *testing.T) {
 	tt := testutil.NewTestTmux(t)
 
 	// Pre-create a session using abduco command
-	createCmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp")
+	createCmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
 	if _, err := tt.Run(createCmd); err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -98,11 +98,11 @@ func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
 	tt := testutil.NewTestTmux(t)
 
 	// Create sessions for two different projects
-	cmd1 := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp")
+	cmd1 := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
 	if _, err := tt.Run(cmd1); err != nil {
 		t.Fatalf("create myapp failed: %v", err)
 	}
-	cmd2 := abduco.BuildCreateCommand("ccc.other.main", "/tmp")
+	cmd2 := abduco.BuildCreateCommand("ccc.other.main", "/tmp", "")
 	if _, err := tt.Run(cmd2); err != nil {
 		t.Fatalf("create other failed: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestSessionFlow_KillSession(t *testing.T) {
 	tt := testutil.NewTestTmux(t)
 
 	// Create a session
-	cmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp")
+	cmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
 	if _, err := tt.Run(cmd); err != nil {
 		t.Fatalf("create session failed: %v", err)
 	}

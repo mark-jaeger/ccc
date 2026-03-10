@@ -3,7 +3,7 @@ package abduco
 import "testing"
 
 func TestBuildCreateCommand(t *testing.T) {
-	got := BuildCreateCommand("ccc.rt1.main", "/home/user/proj")
+	got := BuildCreateCommand("ccc.rt1.main", "/home/user/proj", "")
 	want := "cd '/home/user/proj' && abduco -n 'ccc.rt1.main' bash -l"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
@@ -11,16 +11,32 @@ func TestBuildCreateCommand(t *testing.T) {
 }
 
 func TestBuildCreateCommand_WithSpecialChars(t *testing.T) {
-	got := BuildCreateCommand("ccc.rt1.main", "/home/user/project's dir")
+	got := BuildCreateCommand("ccc.rt1.main", "/home/user/project's dir", "")
 	want := "cd '/home/user/project'\\''s dir' && abduco -n 'ccc.rt1.main' bash -l"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
 }
 
+func TestBuildCreateCommand_WithDetachKey(t *testing.T) {
+	got := BuildCreateCommand("ccc.rt1.main", "/home/user/proj", "^a")
+	want := "cd '/home/user/proj' && abduco -e '^a' -n 'ccc.rt1.main' bash -l"
+	if got != want {
+		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
+	}
+}
+
 func TestBuildAttachCommand(t *testing.T) {
-	got := BuildAttachCommand("ccc.rt1.main")
+	got := BuildAttachCommand("ccc.rt1.main", "")
 	want := "abduco -a 'ccc.rt1.main'"
+	if got != want {
+		t.Errorf("BuildAttachCommand() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildAttachCommand_WithDetachKey(t *testing.T) {
+	got := BuildAttachCommand("ccc.rt1.main", "^a")
+	want := "abduco -e '^a' -a 'ccc.rt1.main'"
 	if got != want {
 		t.Errorf("BuildAttachCommand() = %q, want %q", got, want)
 	}

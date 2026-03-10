@@ -30,13 +30,22 @@ type Session struct {
 
 // BuildCreateCommand returns a shell command that creates a new abduco session.
 // The session starts bash -l in the specified path.
-func BuildCreateCommand(name, path string) string {
+// If detachKey is non-empty, it's passed as the -e flag (e.g., "^a" for Ctrl+a).
+func BuildCreateCommand(name, path, detachKey string) string {
+	if detachKey != "" {
+		return fmt.Sprintf("cd %s && abduco -e %s -n %s bash -l",
+			shellutil.Quote(path), shellutil.Quote(detachKey), shellutil.Quote(name))
+	}
 	return fmt.Sprintf("cd %s && abduco -n %s bash -l",
 		shellutil.Quote(path), shellutil.Quote(name))
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.
-func BuildAttachCommand(name string) string {
+// If detachKey is non-empty, it's passed as the -e flag (e.g., "^a" for Ctrl+a).
+func BuildAttachCommand(name, detachKey string) string {
+	if detachKey != "" {
+		return fmt.Sprintf("abduco -e %s -a %s", shellutil.Quote(detachKey), shellutil.Quote(name))
+	}
 	return fmt.Sprintf("abduco -a %s", shellutil.Quote(name))
 }
 

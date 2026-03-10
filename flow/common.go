@@ -5,12 +5,19 @@ package flow
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 	"github.com/mark-jaeger/ccc/ui"
 )
+
+// detachKey returns the custom abduco detach key from CCC_DETACH_KEY env var.
+// Returns empty string if not set, which uses abduco's default (Ctrl+\).
+func detachKey() string {
+	return os.Getenv("CCC_DETACH_KEY")
+}
 
 // Runner abstracts command execution (SSH or local).
 type Runner interface {
@@ -198,19 +205,19 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session abduco.Se
 	}
 
 	fmt.Fprintf(out, "\n  Attaching to %s...\n", session.Name)
-	return runner.RunInteractive(abduco.BuildAttachCommand(session.Name))
+	return runner.RunInteractive(abduco.BuildAttachCommand(session.Name, detachKey()))
 }
 
 func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string, existing []abduco.Session) error {
 	name := abduco.NextAutoName(projectKey, existing)
 
-	createCmd := abduco.BuildCreateCommand(name, projectPath)
+	createCmd := abduco.BuildCreateCommand(name, projectPath, detachKey())
 	if _, err := runner.Run(createCmd); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
 	fmt.Fprintf(out, "  Created session %s\n", name)
-	return runner.RunInteractive(abduco.BuildAttachCommand(name))
+	return runner.RunInteractive(abduco.BuildAttachCommand(name, detachKey()))
 }
 
 func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []abduco.Session) error {
