@@ -8,7 +8,7 @@
 
 | # | Phase | Goal | Requirements | Plans | Status |
 |---|-------|------|--------------|-------|--------|
-| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 1/2 | ◐ In Progress |
+| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 2/2 | ● Complete |
 | 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | 0/? | ○ Pending |
 
 ---
@@ -23,7 +23,7 @@
 
 Plans:
 - [x] 01-01-PLAN.md — Core package (Session struct, command builders, parser, helpers)
-- [ ] 01-02-PLAN.md — Unit tests and integration test scaffolding
+- [x] 01-02-PLAN.md — Unit tests and integration test scaffolding
 
 **Success Criteria:**
 1. `abduco/sessions.go` exists with `BuildCreateCommand`, `BuildAttachCommand`, `BuildListCommand`, `BuildKillCommand`
