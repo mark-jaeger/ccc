@@ -147,3 +147,104 @@ func TestParseSessionList_MultipleSessions(t *testing.T) {
 		t.Fatalf("ParseSessionList() returned %d sessions, want 3", len(sessions))
 	}
 }
+
+func TestFilterSessionsForProject(t *testing.T) {
+	sessions := []Session{
+		{Name: "ccc.rt1.main", Project: "rt1", Suffix: "main"},
+		{Name: "ccc.rt1.2", Project: "rt1", Suffix: "2"},
+		{Name: "ccc.other.main", Project: "other", Suffix: "main"},
+		{Name: "external-session", External: true},
+	}
+
+	filtered := FilterSessionsForProject(sessions, "rt1")
+
+	// Should include rt1 sessions + external
+	if len(filtered) != 3 {
+		t.Fatalf("FilterSessionsForProject() returned %d sessions, want 3", len(filtered))
+	}
+
+	// Verify rt1 sessions are included
+	hasRt1Main := false
+	hasRt12 := false
+	hasExternal := false
+	for _, s := range filtered {
+		if s.Name == "ccc.rt1.main" {
+			hasRt1Main = true
+		}
+		if s.Name == "ccc.rt1.2" {
+			hasRt12 = true
+		}
+		if s.Name == "external-session" {
+			hasExternal = true
+		}
+	}
+	if !hasRt1Main {
+		t.Error("FilterSessionsForProject() missing ccc.rt1.main")
+	}
+	if !hasRt12 {
+		t.Error("FilterSessionsForProject() missing ccc.rt1.2")
+	}
+	if !hasExternal {
+		t.Error("FilterSessionsForProject() missing external-session")
+	}
+}
+
+func TestFilterSessionsForProject_ExcludesOtherProjects(t *testing.T) {
+	sessions := []Session{
+		{Name: "ccc.rt1.main", Project: "rt1", Suffix: "main"},
+		{Name: "ccc.other.main", Project: "other", Suffix: "main"},
+	}
+
+	filtered := FilterSessionsForProject(sessions, "rt1")
+
+	if len(filtered) != 1 {
+		t.Fatalf("FilterSessionsForProject() returned %d sessions, want 1", len(filtered))
+	}
+	if filtered[0].Name != "ccc.rt1.main" {
+		t.Errorf("FilterSessionsForProject() returned %q, want ccc.rt1.main", filtered[0].Name)
+	}
+}
+
+func TestNextAutoName_NoExisting(t *testing.T) {
+	got := NextAutoName("rt1", nil)
+	want := "ccc.rt1.main"
+	if got != want {
+		t.Errorf("NextAutoName() = %q, want %q", got, want)
+	}
+}
+
+func TestNextAutoName_MainExists(t *testing.T) {
+	existing := []Session{
+		{Name: "ccc.rt1.main", Project: "rt1", Suffix: "main"},
+	}
+	got := NextAutoName("rt1", existing)
+	want := "ccc.rt1.2"
+	if got != want {
+		t.Errorf("NextAutoName() = %q, want %q", got, want)
+	}
+}
+
+func TestNextAutoName_WithGap(t *testing.T) {
+	// main and 3 exist, should return 4
+	existing := []Session{
+		{Name: "ccc.rt1.main", Project: "rt1", Suffix: "main"},
+		{Name: "ccc.rt1.3", Project: "rt1", Suffix: "3"},
+	}
+	got := NextAutoName("rt1", existing)
+	want := "ccc.rt1.4"
+	if got != want {
+		t.Errorf("NextAutoName() = %q, want %q", got, want)
+	}
+}
+
+func TestNextAutoName_NoMain(t *testing.T) {
+	// Only numbered sessions exist, should return main
+	existing := []Session{
+		{Name: "ccc.rt1.2", Project: "rt1", Suffix: "2"},
+	}
+	got := NextAutoName("rt1", existing)
+	want := "ccc.rt1.main"
+	if got != want {
+		t.Errorf("NextAutoName() = %q, want %q", got, want)
+	}
+}
