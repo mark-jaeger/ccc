@@ -5,11 +5,10 @@ package flow
 import (
 	"fmt"
 	"io"
-	"strings"
 
+	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/internal/shellutil"
-	"github.com/mark-jaeger/ccc/tmux"
 	"github.com/mark-jaeger/ccc/ui"
 )
 
@@ -114,20 +113,20 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 
 // SessionFlow handles session listing -> attach or create.
 func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string) error {
-	if err := CheckTmux(in, out, runner); err != nil {
+	if err := CheckAbduco(in, out, runner); err != nil {
 		return err
 	}
 
 	for {
-		listCmd := tmux.BuildListCommand()
+		listCmd := abduco.BuildListCommand()
 		listOutput, err := runner.Run(listCmd)
 		if err != nil {
 			// Could be "no server" — treat as zero sessions
 			listOutput = ""
 		}
 
-		allSessions := tmux.ParseSessionList(listOutput)
-		sessions := tmux.FilterSessionsForProject(allSessions, projectKey)
+		allSessions := abduco.ParseSessionList(listOutput)
+		sessions := abduco.FilterSessionsForProject(allSessions, projectKey)
 
 		// Auto-skip: zero sessions -> create
 		if len(sessions) == 0 {
@@ -137,9 +136,11 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		// Show session menu
 		items := make([]ui.MenuItem, len(sessions))
 		for i, s := range sessions {
-			extra := fmt.Sprintf("(%d windows)", s.Windows)
-			if !s.Verified {
-				extra += " (unverified)"
+			extra := ""
+			if s.Dead {
+				extra = "(dead)"
+			} else if s.External {
+				extra = "(external)"
 			}
 			items[i] = ui.MenuItem{Key: s.Name, Label: s.Name, Extra: extra}
 		}
@@ -150,9 +151,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 			ShowBack:   true,
 			ShowRemove: false,
 			ExtraActions: []ui.ExtraAction{
-				{Key: "t", Label: "Detach clients", ID: "detach", ItemAction: true},
 				{Key: "n", Label: "New session", ID: "new"},
-				{Key: "r", Label: "Rename session", ID: "rename", ItemAction: true},
 				{Key: "x", Label: "Kill session", ID: "kill", ItemAction: true},
 			},
 		})
@@ -165,16 +164,8 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 			return nil
 		case ui.ActionExtra:
 			switch result.ExtraKey {
-			case "detach":
-				detachSessionClients(out, runner, result.Selected)
-				continue
 			case "kill":
 				if err := killSession(in, out, runner, result.Selected, sessions); err != nil {
-					return err
-				}
-				continue
-			case "rename":
-				if err := renameSession(in, out, runner, projectKey, result.Selected, sessions); err != nil {
 					return err
 				}
 				continue
@@ -192,95 +183,39 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 	}
 }
 
-func attachSession(in io.Reader, out io.Writer, runner Runner, session tmux.Session) error {
-	if !session.Verified {
-		fmt.Fprintf(out, "\n  Session %q matches by name but wasn't created by ccc.\n", session.Name)
+func attachSession(in io.Reader, out io.Writer, runner Runner, session abduco.Session) error {
+	if session.External {
+		fmt.Fprintf(out, "\n  Session %q is an external session (not created by ccc).\n", session.Name)
 		answer, err := ui.Confirm(in, out, "Proceed?")
 		if err != nil || !answer {
 			return err
 		}
 	}
 
-	// Check for other clients
-	clientOutput, clientErr := runner.Run(tmux.BuildListClientsCommand(session.Name))
-	if clientErr != nil {
-		fmt.Fprintf(out, "  Warning: could not list clients: %v\n", clientErr)
+	if session.Dead {
+		fmt.Fprintf(out, "\n  Session %q is dead.\n", session.Name)
+		return nil
 	}
-	clients := tmux.ParseClientList(clientOutput)
-	if len(clients) > 0 {
-		c := clients[0]
-		fmt.Fprintf(out, "\n  This session is attached from another client (%dx%d).\n", c.Width, c.Height)
-
-		detachResult, err := ui.ShowMenu(in, out, ui.MenuConfig{
-			Title: "Options",
-			Items: []ui.MenuItem{
-				{Key: "attach", Label: fmt.Sprintf("Attach anyway (layout constrained to %dx%d)", c.Width, c.Height)},
-				{Key: "detach", Label: "Detach other client and attach (full resolution)"},
-				{Key: "cancel", Label: "Cancel"},
-			},
-		})
-		if err != nil {
-			return err
-		}
-		if detachResult.Action == ui.ActionQuit || detachResult.Selected.Key == "cancel" {
-			return nil
-		}
-		if detachResult.Selected.Key == "detach" {
-			if _, detachErr := runner.Run(tmux.BuildDetachClientsCommand(session.Name)); detachErr != nil {
-				fmt.Fprintf(out, "  Warning: could not detach clients: %v\n", detachErr)
-			}
-		}
-	}
-
-	// Ensure bell/passthrough options are set (fixes sessions from older ccc versions).
-	runner.Run(tmux.BuildEnsureNotifyOptionsCommand(session.Name))
 
 	fmt.Fprintf(out, "\n  Attaching to %s...\n", session.Name)
-	return runner.RunInteractive(tmux.BuildAttachCommand(session.Name))
+	return runner.RunInteractive(abduco.BuildAttachCommand(session.Name))
 }
 
-func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string, existing []tmux.Session) error {
-	autoName := tmux.NextAutoName(projectKey, existing)
-	namePrompt := fmt.Sprintf("Session name (enter for %q)", autoName)
-	name, err := ui.Prompt(in, out, namePrompt)
-	if err != nil {
-		return err
-	}
-	if name == "" {
-		name = autoName
-	} else if name != projectKey && !strings.HasPrefix(name, projectKey+"-") {
-		name = projectKey + "-" + name
-	}
+func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string, existing []abduco.Session) error {
+	name := abduco.NextAutoName(projectKey, existing)
 
-	createCmd := tmux.BuildCreateCommand(name, projectPath, projectKey)
+	createCmd := abduco.BuildCreateCommand(name, projectPath)
 	if _, err := runner.Run(createCmd); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Enable passthrough for escape sequences (tmux >= 3.3; errors ignored for older versions).
-	runner.Run(tmux.BuildSetPassthroughCommand(name))
-
-	fmt.Fprintf(out, "  \u2713 Created session %s\n", name)
-	return runner.RunInteractive(tmux.BuildAttachCommand(name))
+	fmt.Fprintf(out, "  Created session %s\n", name)
+	return runner.RunInteractive(abduco.BuildAttachCommand(name))
 }
 
-func detachSessionClients(out io.Writer, runner Runner, item ui.MenuItem) {
-	clientOutput, _ := runner.Run(tmux.BuildListClientsCommand(item.Key))
-	clients := tmux.ParseClientList(clientOutput)
-	if len(clients) == 0 {
-		fmt.Fprintf(out, "  No clients attached to %s.\n", item.Key)
-		return
-	}
-	if _, err := runner.Run(tmux.BuildDetachClientsCommand(item.Key)); err != nil {
-		fmt.Fprintf(out, "  Warning: could not detach clients: %v\n", err)
-	} else {
-		fmt.Fprintf(out, "  Detached %d client(s) from %s.\n", len(clients), item.Key)
-	}
-}
-
-func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []tmux.Session) error {
+func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []abduco.Session) error {
 	for _, s := range sessions {
-		if s.Name == item.Key && !s.Verified {
+		if s.Name == item.Key && s.External {
 			fmt.Fprintf(out, "\n  Warning: session %q wasn't created by ccc.\n", s.Name)
 			break
 		}
@@ -294,44 +229,21 @@ func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, s
 		return nil
 	}
 
-	killCmd := tmux.BuildKillCommand(item.Key)
+	var sessionPID int
+	for _, s := range sessions {
+		if s.Name == item.Key {
+			sessionPID = s.PID
+			break
+		}
+	}
+	if sessionPID == 0 {
+		return fmt.Errorf("session %s not found", item.Key)
+	}
+	killCmd := abduco.BuildKillCommand(sessionPID)
 	if _, err := runner.Run(killCmd); err != nil {
 		return fmt.Errorf("failed to kill session: %w", err)
 	}
-	fmt.Fprintf(out, "  \u2713 Killed session %s\n", item.Key)
-	return nil
-}
-
-func renameSession(in io.Reader, out io.Writer, runner Runner, projectKey string, item ui.MenuItem, sessions []tmux.Session) error {
-	suffix, err := ui.Prompt(in, out, "New suffix (enter for 'main')")
-	if err != nil {
-		return err
-	}
-	if suffix == "" {
-		suffix = "main"
-	}
-
-	newName := projectKey + "-" + suffix
-
-	if newName == item.Key {
-		fmt.Fprintf(out, "  Session already named %s.\n", newName)
-		return nil
-	}
-
-	// Check if new name conflicts with a different existing session
-	for _, s := range sessions {
-		if s.Name == newName {
-			fmt.Fprintf(out, "  Session %s already exists.\n", newName)
-			return nil
-		}
-	}
-
-	renameCmd := tmux.BuildRenameCommand(item.Key, newName)
-	if _, err := runner.Run(renameCmd); err != nil {
-		return fmt.Errorf("failed to rename session: %w", err)
-	}
-
-	fmt.Fprintf(out, "  \u2713 Renamed %s \u2192 %s\n", item.Key, newName)
+	fmt.Fprintf(out, "  Killed session %s\n", item.Key)
 	return nil
 }
 
