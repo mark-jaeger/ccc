@@ -1,4 +1,4 @@
-// ccc is a CLI tool for managing tmux sessions on local and remote machines.
+// ccc is a CLI tool for managing abduco sessions on local and remote machines.
 package main
 
 import (
@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/mark-jaeger/ccc/flow"
-	"github.com/mark-jaeger/ccc/tmux"
 )
 
 // version is set at build time via ldflags; defaults to "dev" for local builds.
@@ -18,10 +17,6 @@ func main() {
 	if len(args) > 0 && (args[0] == "-v" || args[0] == "--version") {
 		fmt.Println("ccc", version)
 		return
-	}
-
-	if socket := os.Getenv("CCC_TMUX_SOCKET"); socket != "" {
-		tmux.SocketOverride = socket
 	}
 
 	isLocal := len(args) > 0 && args[0] == "local"
