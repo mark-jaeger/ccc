@@ -19,6 +19,12 @@
 
 **Requirements:** SESS-01, SESS-02, SESS-03, SESS-04, SESS-05, SESS-06, MIGR-01, ERRH-01, ERRH-02
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Core package (Session struct, command builders, parser, helpers)
+- [ ] 01-02-PLAN.md — Unit tests and integration test scaffolding
+
 **Success Criteria:**
 1. `abduco/sessions.go` exists with `BuildCreateCommand`, `BuildAttachCommand`, `BuildListCommand`, `BuildKillCommand`
 2. `ParseSessionList` correctly parses tab-delimited abduco output (status, timestamp, PID, name)
