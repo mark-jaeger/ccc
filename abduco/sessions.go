@@ -5,9 +5,18 @@ package abduco
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
+
+// sessionLineRe matches abduco session output lines.
+// Format: status space timestamp\tPID\tname
+// Status: * = attached, + = dead, space = detached
+// The timestamp format varies by locale, so we use tab delimiters as primary separators.
+var sessionLineRe = regexp.MustCompile(`^([*+ ])\s+\S+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\t(\d+)\t(.+)$`)
 
 // Session represents an abduco session with parsed metadata.
 type Session struct {
@@ -46,4 +55,55 @@ func BuildKillCommand(pid int) string {
 // BuildCheckCommand returns a shell command to check if abduco is installed.
 func BuildCheckCommand() string {
 	return "command -v abduco"
+}
+
+// ParseSessionList parses the output of abduco (BuildListCommand) into
+// a slice of Session values. Returns nil for empty input.
+func ParseSessionList(output string) []Session {
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+
+	lines := strings.Split(output, "\n")
+	var sessions []Session
+
+	for _, line := range lines {
+		// Don't trim leading whitespace - the status character may be a space
+		line = strings.TrimRight(line, "\r\n")
+		matches := sessionLineRe.FindStringSubmatch(line)
+		if len(matches) != 4 {
+			continue
+		}
+
+		status := matches[1]
+		pid, _ := strconv.Atoi(matches[2])
+		name := matches[3]
+
+		s := parseSessionName(name)
+		s.Dead = status == "+"
+		s.PID = pid
+		sessions = append(sessions, s)
+	}
+
+	return sessions
+}
+
+// parseSessionName extracts project and suffix from a session name.
+// Format: ccc.{project}.{suffix}
+// Non-ccc sessions are marked as External.
+func parseSessionName(name string) Session {
+	if !strings.HasPrefix(name, "ccc.") {
+		return Session{Name: name, External: true}
+	}
+
+	parts := strings.SplitN(name[4:], ".", 2) // skip "ccc."
+	if len(parts) != 2 {
+		return Session{Name: name, External: true}
+	}
+
+	return Session{
+		Name:    name,
+		Project: parts[0],
+		Suffix:  parts[1],
+	}
 }
