@@ -8,8 +8,8 @@
 
 | # | Phase | Goal | Requirements | Plans | Status |
 |---|-------|------|--------------|-------|--------|
-| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 2/2 | ● Complete |
-| 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | 0/? | ○ Pending |
+| 1 | abduco-package | Create abduco package with command builders and parser | SESS-01..06, MIGR-01, ERRH-01..02 | 2/2 | Complete |
+| 2 | flow-migration | Migrate flow layer and remove tmux | MIGR-02..05 | 0/2 | Pending |
 
 ---
 
@@ -41,10 +41,16 @@ Plans:
 
 **Requirements:** MIGR-02, MIGR-03, MIGR-04, MIGR-05
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Migrate flow package (common.go, errors.go, tests)
+- [ ] 02-02-PLAN.md — Delete tmux package and update documentation
+
 **Success Criteria:**
 1. `flow/common.go` imports `abduco` instead of `tmux`
 2. `attachSession` is simplified (no client negotiation, no passthrough config)
-3. `flow/setup.go` checks for abduco instead of tmux
+3. `flow/errors.go` checks for abduco instead of tmux
 4. `tmux/` package deleted
 5. All existing tests pass (updated for abduco)
 6. Manual test: create session, detach, reattach over SSH
