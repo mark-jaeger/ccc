@@ -107,3 +107,45 @@ func parseSessionName(name string) Session {
 		Suffix:  parts[1],
 	}
 }
+
+// FilterSessionsForProject returns sessions belonging to a project.
+// Sessions with matching Project are included, as are External sessions
+// (for visibility into all abduco sessions on the machine).
+func FilterSessionsForProject(sessions []Session, projectKey string) []Session {
+	var result []Session
+	for _, s := range sessions {
+		if s.Project == projectKey || s.External {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// NextAutoName returns the next session name for a project.
+// The first session gets suffix "main", subsequent sessions get 2, 3, 4...
+// Format: ccc.{project}.{suffix}
+func NextAutoName(projectKey string, existing []Session) string {
+	prefix := "ccc." + projectKey + "."
+
+	if len(existing) == 0 {
+		return prefix + "main"
+	}
+
+	// Check if "main" suffix already exists
+	hasMain := false
+	maxNum := 1 // Start from 1 since "main" counts as first
+	for _, s := range existing {
+		if s.Suffix == "main" {
+			hasMain = true
+		}
+		if n, err := strconv.Atoi(s.Suffix); err == nil && n > maxNum {
+			maxNum = n
+		}
+	}
+
+	if !hasMain {
+		return prefix + "main"
+	}
+
+	return prefix + strconv.Itoa(maxNum+1)
+}
