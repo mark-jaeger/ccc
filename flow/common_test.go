@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/tmux"
 	"github.com/mark-jaeger/ccc/ui"
 )
 
 // mockRunner implements the Runner interface for testing.
 type mockRunner struct {
-	responses map[string]string
-	errors    map[string]error
+	responses   map[string]string
+	errors      map[string]error
 	interactive []string
 }
 
@@ -56,12 +56,12 @@ func TestProjectFlowSelectProject(t *testing.T) {
 	runner := newMockRunner()
 	// "test -d" for path validation
 	runner.responses["test -d"] = ""
-	// tmux check
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// tmux list-sessions returns empty (no sessions)
-	runner.responses["tmux list-sessions"] = ""
-	// tmux create session
-	runner.responses["tmux new-session"] = ""
+	// abduco check
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// abduco list returns empty (no sessions)
+	runner.responses["abduco 2>&1"] = ""
+	// abduco create session
+	runner.responses["abduco -n"] = ""
 
 	projects := &config.ProjectsConfig{
 		Projects: map[string]config.Project{
@@ -69,8 +69,8 @@ func TestProjectFlowSelectProject(t *testing.T) {
 		},
 	}
 
-	// Input: select project 1, then enter for default session name
-	in := strings.NewReader("1\n\n")
+	// Input: select project 1 (no session name prompt - auto-naming)
+	in := strings.NewReader("1\n")
 	out := &bytes.Buffer{}
 
 	err := ProjectFlow(in, out, runner, projects, nil, nil)
@@ -161,12 +161,12 @@ func TestProjectFlowScanNotAvailable(t *testing.T) {
 
 func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = ""
-	runner.responses["tmux new-session"] = ""
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["abduco 2>&1"] = ""
+	runner.responses["abduco -n"] = ""
 
-	// Enter key accepts default session name
-	in := strings.NewReader("\n")
+	// No user input needed - auto-naming
+	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -174,8 +174,8 @@ func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "Created session") {
-		t.Errorf("expected session creation message, got: %s", out.String())
+	if !strings.Contains(out.String(), "Created session ccc.myapp.main") {
+		t.Errorf("expected session creation message with ccc.myapp.main, got: %s", out.String())
 	}
 
 	// Should have called RunInteractive for attach
@@ -186,11 +186,9 @@ func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 
 func TestSessionFlowOneSessionShowsMenu(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// One verified session
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2"
-	// No other clients
-	runner.responses["tmux list-clients"] = ""
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// One session in abduco format (status char + tab + day + date + time + tab + PID + tab + name)
+	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
 
 	// Select session 1 from menu
 	in := strings.NewReader("1\n")
@@ -210,102 +208,14 @@ func TestSessionFlowOneSessionShowsMenu(t *testing.T) {
 	}
 }
 
-func TestCreateSessionDefaultName(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = ""
-	runner.responses["tmux new-session"] = ""
-
-	// Empty input → accept default name
-	in := strings.NewReader("\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Created session myapp") {
-		t.Errorf("expected 'Created session myapp', got: %s", output)
-	}
-}
-
-func TestCreateSessionCustomName(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = ""
-	runner.responses["tmux new-session"] = ""
-
-	// Type "dev" → becomes "myapp-dev"
-	in := strings.NewReader("dev\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Created session myapp-dev") {
-		t.Errorf("expected 'Created session myapp-dev', got: %s", output)
-	}
-}
-
-func TestCreateSessionAlreadyPrefixed(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = ""
-	runner.responses["tmux new-session"] = ""
-
-	// Type "myapp-staging" → stays as-is (already has prefix)
-	in := strings.NewReader("myapp-staging\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Created session myapp-staging") {
-		t.Errorf("expected 'Created session myapp-staging', got: %s", output)
-	}
-}
-
-func TestCreateSessionNameMatchesProject(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = ""
-	runner.responses["tmux new-session"] = ""
-
-	// Type "myapp" → stays as "myapp"
-	in := strings.NewReader("myapp\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Created session myapp") {
-		t.Errorf("expected 'Created session myapp', got: %s", output)
-	}
-	// Should NOT be "myapp-myapp"
-	if strings.Contains(output, "myapp-myapp") {
-		t.Errorf("should not double-prefix, got: %s", output)
-	}
-}
-
 func TestKillSessionConfirmed(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["tmux kill-session"] = ""
+	runner.responses["kill "] = ""
 
-	sessions := []tmux.Session{
-		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+	sessions := []abduco.Session{
+		{Name: "ccc.myapp.main", Project: "myapp", Suffix: "main", PID: 12345},
 	}
-	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+	item := ui.MenuItem{Key: "ccc.myapp.main", Label: "ccc.myapp.main"}
 
 	// Confirm kill
 	in := strings.NewReader("y\n")
@@ -317,21 +227,21 @@ func TestKillSessionConfirmed(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "Killed session myapp") {
+	if !strings.Contains(output, "Killed session ccc.myapp.main") {
 		t.Errorf("expected kill message, got: %s", output)
 	}
 }
 
-func TestKillSessionUnverifiedWarning(t *testing.T) {
+func TestKillSessionExternalWarning(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["tmux kill-session"] = ""
+	runner.responses["kill "] = ""
 
-	sessions := []tmux.Session{
-		{Name: "myapp-extra", Project: "", Path: "/tmp", Windows: 1, Verified: false},
+	sessions := []abduco.Session{
+		{Name: "myapp-extra", External: true, PID: 12346},
 	}
 	item := ui.MenuItem{Key: "myapp-extra", Label: "myapp-extra"}
 
-	// Confirm kill of unverified session
+	// Confirm kill of external session
 	in := strings.NewReader("y\n")
 	out := &bytes.Buffer{}
 
@@ -342,7 +252,7 @@ func TestKillSessionUnverifiedWarning(t *testing.T) {
 
 	output := out.String()
 	if !strings.Contains(output, "wasn't created by ccc") {
-		t.Errorf("expected unverified warning, got: %s", output)
+		t.Errorf("expected external warning, got: %s", output)
 	}
 	if !strings.Contains(output, "Killed session") {
 		t.Errorf("expected kill message, got: %s", output)
@@ -351,12 +261,12 @@ func TestKillSessionUnverifiedWarning(t *testing.T) {
 
 func TestKillSessionDeclined(t *testing.T) {
 	runner := newMockRunner()
-	// Note: no kill-session response needed - command shouldn't be called
+	// Note: no kill response needed - command shouldn't be called
 
-	sessions := []tmux.Session{
-		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
+	sessions := []abduco.Session{
+		{Name: "ccc.myapp.main", Project: "myapp", Suffix: "main", PID: 12345},
 	}
-	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
+	item := ui.MenuItem{Key: "ccc.myapp.main", Label: "ccc.myapp.main"}
 
 	// Decline kill
 	in := strings.NewReader("n\n")
@@ -373,11 +283,10 @@ func TestKillSessionDeclined(t *testing.T) {
 	}
 }
 
-func TestAttachSessionVerifiedNoClients(t *testing.T) {
+func TestAttachSessionNoClients(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2"
-	runner.responses["tmux list-clients"] = ""
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
 
 	// Select session 1 from menu
 	in := strings.NewReader("1\n")
@@ -393,23 +302,22 @@ func TestAttachSessionVerifiedNoClients(t *testing.T) {
 	}
 	found := false
 	for _, cmd := range runner.interactive {
-		if strings.Contains(cmd, "tmux attach") {
+		if strings.Contains(cmd, "abduco -a") {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected tmux attach in interactive commands")
+		t.Error("expected abduco -a in interactive commands")
 	}
 }
 
-func TestAttachSessionUnverifiedDeclined(t *testing.T) {
+func TestAttachSessionExternalDeclined(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	// One unverified session (no project tag, name matches by prefix)
-	runner.responses["tmux list-sessions"] = "myapp||||||/tmp|||1"
-	runner.responses["tmux list-clients"] = ""
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// One external session (no ccc. prefix)
+	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12347\tmyapp"
 
-	// Select session 1, then decline unverified prompt
+	// Select session 1, then decline external prompt
 	in := strings.NewReader("1\nn\n")
 	out := &bytes.Buffer{}
 
@@ -418,22 +326,22 @@ func TestAttachSessionUnverifiedDeclined(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "wasn't created by ccc") {
-		t.Errorf("expected unverified warning, got: %s", out.String())
+	if !strings.Contains(out.String(), "external session") {
+		t.Errorf("expected external warning, got: %s", out.String())
 	}
 	if len(runner.interactive) != 0 {
 		t.Error("expected no RunInteractive when user declines")
 	}
 }
 
-func TestSessionFlowDetachNoClients(t *testing.T) {
+func TestAttachSessionDead(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
-	runner.responses["tmux list-clients"] = ""
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// One dead session (+ status)
+	runner.responses["abduco 2>&1"] = "+\tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
 
-	// Detach session 1 (no clients), then quit
-	in := strings.NewReader("t\n1\nq\n")
+	// Select session 1
+	in := strings.NewReader("1\n")
 	out := &bytes.Buffer{}
 
 	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
@@ -441,35 +349,11 @@ func TestSessionFlowDetachNoClients(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	output := out.String()
-	if !strings.Contains(output, "No clients attached to myapp") {
-		t.Errorf("expected no-clients message, got: %s", output)
+	if !strings.Contains(out.String(), "is dead") {
+		t.Errorf("expected dead session message, got: %s", out.String())
 	}
-	// Menu should re-display after detach attempt
-	if strings.Count(output, "Sessions for myapp") < 2 {
-		t.Errorf("expected menu to re-display after detach, got: %s", output)
-	}
-}
-
-func TestSessionFlowDetachWithClients(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2\nmyapp-2|||myapp|||/home/user/myapp|||1"
-	runner.responses["tmux list-clients"] = "/dev/ttys004: 220x56 0"
-	runner.responses["tmux detach-client"] = ""
-
-	// Detach session 1 (has a client), then quit
-	in := strings.NewReader("t\n1\nq\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Detached 1 client(s) from myapp") {
-		t.Errorf("expected detach success message, got: %s", output)
+	if len(runner.interactive) != 0 {
+		t.Error("expected no RunInteractive for dead session")
 	}
 }
 
@@ -513,7 +397,7 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 		},
 	}
 
-	// Select project 1, path not found, Confirm gets EOF → decline
+	// Select project 1, path not found, Confirm gets EOF -> decline
 	in := strings.NewReader("1\n")
 	out := &bytes.Buffer{}
 
@@ -525,78 +409,6 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 	// Project should still exist since confirmation wasn't provided
 	if _, exists := projects.Projects["myapp"]; !exists {
 		t.Error("expected project to still exist when confirmation not provided")
-	}
-}
-
-func TestSessionFlowRenameDefaultSuffix(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
-	runner.responses["tmux list-sessions"] = "myapp|||myapp|||/home/user/myapp|||2"
-	runner.responses["tmux list-clients"] = ""
-	runner.responses["tmux rename-session"] = ""
-
-	// Rename session 1, accept default suffix (main), then quit
-	// Note: Due to bufio.Scanner buffering in ShowMenu, the Prompt for suffix
-	// receives EOF and uses the default. The empty line is consumed by the menu loop.
-	in := strings.NewReader("r\n1\nq\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Renamed myapp → myapp-main") {
-		t.Errorf("expected rename success message, got: %s", output)
-	}
-}
-
-func TestRenameSessionCustomSuffix(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["tmux rename-session"] = ""
-
-	sessions := []tmux.Session{
-		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
-	}
-	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
-
-	// Provide custom suffix "dev"
-	in := strings.NewReader("dev\n")
-	out := &bytes.Buffer{}
-
-	err := renameSession(in, out, runner, "myapp", item, sessions)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Renamed myapp → myapp-dev") {
-		t.Errorf("expected rename success message, got: %s", output)
-	}
-}
-
-func TestRenameSessionConflict(t *testing.T) {
-	runner := newMockRunner()
-
-	sessions := []tmux.Session{
-		{Name: "myapp", Project: "myapp", Path: "/home/user/myapp", Windows: 2, Verified: true},
-		{Name: "myapp-dev", Project: "myapp", Path: "/home/user/myapp", Windows: 1, Verified: true},
-	}
-	item := ui.MenuItem{Key: "myapp", Label: "myapp"}
-
-	// Try suffix "dev" which conflicts with existing myapp-dev
-	in := strings.NewReader("dev\n")
-	out := &bytes.Buffer{}
-
-	err := renameSession(in, out, runner, "myapp", item, sessions)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "already exists") {
-		t.Errorf("expected conflict error, got: %s", output)
 	}
 }
 
@@ -739,5 +551,58 @@ func TestDeleteProjectSaveError(t *testing.T) {
 	output := out.String()
 	if strings.Contains(output, "Deleted") {
 		t.Errorf("should not show delete message on save failure, got: %s", output)
+	}
+}
+
+func TestSessionFlowMultipleSessions(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// Two sessions for the project
+	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main\n \tThu 2024-01-01 12:01:00\t12346\tccc.myapp.2"
+
+	// Select session 2 from menu
+	in := strings.NewReader("2\n")
+	out := &bytes.Buffer{}
+
+	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "Attaching") {
+		t.Errorf("expected attach message, got: %s", out.String())
+	}
+
+	// Verify correct session was attached
+	found := false
+	for _, cmd := range runner.interactive {
+		if strings.Contains(cmd, "ccc.myapp.2") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected to attach to ccc.myapp.2")
+	}
+}
+
+func TestSessionFlowNewSession(t *testing.T) {
+	runner := newMockRunner()
+	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	// One existing session
+	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
+	runner.responses["abduco -n"] = ""
+
+	// Select 'n' for new session
+	in := strings.NewReader("n\n")
+	out := &bytes.Buffer{}
+
+	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Since main exists, next should be "2"
+	if !strings.Contains(out.String(), "Created session ccc.myapp.2") {
+		t.Errorf("expected session creation message with ccc.myapp.2, got: %s", out.String())
 	}
 }
