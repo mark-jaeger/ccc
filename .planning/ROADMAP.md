@@ -15,7 +15,7 @@
 **Plans:** 6 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — zmx package with command builders and session parsing
+- [x] 01-01-PLAN.md — zmx package with command builders and session parsing
 - [ ] 01-02-PLAN.md — TUI core with state machine, styles, and keybindings
 - [ ] 01-03-PLAN.md — TUI list components for hosts, projects, sessions
 - [ ] 01-04-PLAN.md — Async commands and orchestration wiring
