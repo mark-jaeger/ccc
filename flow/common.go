@@ -5,19 +5,12 @@ package flow
 import (
 	"fmt"
 	"io"
-	"os"
 
-	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 	"github.com/mark-jaeger/ccc/ui"
+	"github.com/mark-jaeger/ccc/zmx"
 )
-
-// detachKey returns the custom abduco detach key from CCC_DETACH_KEY env var.
-// Returns empty string if not set, which uses abduco's default (Ctrl+\).
-func detachKey() string {
-	return os.Getenv("CCC_DETACH_KEY")
-}
 
 // Runner abstracts command execution (SSH or local).
 type Runner interface {
@@ -25,16 +18,6 @@ type Runner interface {
 	Run(cmd string) (string, error)
 	// RunInteractive executes a command with full stdin/stdout/stderr passthrough.
 	RunInteractive(cmd string) error
-}
-
-// CheckZmx checks if zmx is installed on the target system.
-// Returns nil if zmx is available, error otherwise.
-func CheckZmx(runner Runner) error {
-	_, err := runner.Run("command -v zmx")
-	if err != nil {
-		return fmt.Errorf("zmx not installed: install with 'brew install neurosnap/tap/zmx'")
-	}
-	return nil
 }
 
 // Deprecated: ProjectFlow is replaced by the TUI package.
@@ -136,20 +119,20 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 //
 // SessionFlow handles session listing -> attach or create.
 func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string) error {
-	if err := CheckAbduco(in, out, runner); err != nil {
+	if err := CheckZmx(in, out, runner); err != nil {
 		return err
 	}
 
 	for {
-		listCmd := abduco.BuildListCommand()
+		listCmd := zmx.BuildListCommand()
 		listOutput, err := runner.Run(listCmd)
 		if err != nil {
 			// Could be "no server" — treat as zero sessions
 			listOutput = ""
 		}
 
-		allSessions := abduco.ParseSessionList(listOutput)
-		sessions := abduco.FilterSessionsForProject(allSessions, projectKey)
+		allSessions := zmx.ParseListOutput(listOutput)
+		sessions := zmx.FilterSessionsForProject(allSessions, projectKey)
 
 		// Auto-skip: zero sessions -> create
 		if len(sessions) == 0 {
@@ -160,9 +143,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 		items := make([]ui.MenuItem, len(sessions))
 		for i, s := range sessions {
 			extra := ""
-			if s.Dead {
-				extra = "(dead)"
-			} else if s.External {
+			if s.External {
 				extra = "(external)"
 			}
 			items[i] = ui.MenuItem{Key: s.Name, Label: s.Name, Extra: extra}
@@ -206,7 +187,7 @@ func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, project
 	}
 }
 
-func attachSession(in io.Reader, out io.Writer, runner Runner, session abduco.Session) error {
+func attachSession(in io.Reader, out io.Writer, runner Runner, session zmx.Session) error {
 	if session.External {
 		fmt.Fprintf(out, "\n  Session %q is an external session (not created by ccc).\n", session.Name)
 		answer, err := ui.Confirm(in, out, "Proceed?")
@@ -215,28 +196,18 @@ func attachSession(in io.Reader, out io.Writer, runner Runner, session abduco.Se
 		}
 	}
 
-	if session.Dead {
-		fmt.Fprintf(out, "\n  Session %q is dead.\n", session.Name)
-		return nil
-	}
-
 	fmt.Fprintf(out, "\n  Attaching to %s...\n", session.Name)
-	return runner.RunInteractive(abduco.BuildAttachCommand(session.Name, detachKey()))
+	return runner.RunInteractive(zmx.BuildAttachCommand(session.Name))
 }
 
-func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string, existing []abduco.Session) error {
-	name := abduco.NextAutoName(projectKey, existing)
-
-	createCmd := abduco.BuildCreateCommand(name, projectPath, detachKey())
-	if _, err := runner.Run(createCmd); err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
+func createSession(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string, existing []zmx.Session) error {
+	name := zmx.NextAutoName(projectKey, existing)
 
 	fmt.Fprintf(out, "  Created session %s\n", name)
-	return runner.RunInteractive(abduco.BuildAttachCommand(name, detachKey()))
+	return runner.RunInteractive(zmx.BuildCreateCommand(name, projectPath))
 }
 
-func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []abduco.Session) error {
+func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, sessions []zmx.Session) error {
 	for _, s := range sessions {
 		if s.Name == item.Key && s.External {
 			fmt.Fprintf(out, "\n  Warning: session %q wasn't created by ccc.\n", s.Name)
@@ -252,17 +223,7 @@ func killSession(in io.Reader, out io.Writer, runner Runner, item ui.MenuItem, s
 		return nil
 	}
 
-	var sessionPID int
-	for _, s := range sessions {
-		if s.Name == item.Key {
-			sessionPID = s.PID
-			break
-		}
-	}
-	if sessionPID == 0 {
-		return fmt.Errorf("session %s not found", item.Key)
-	}
-	killCmd := abduco.BuildKillCommand(sessionPID)
+	killCmd := zmx.BuildKillCommand(item.Key)
 	if _, err := runner.Run(killCmd); err != nil {
 		return fmt.Errorf("failed to kill session: %w", err)
 	}

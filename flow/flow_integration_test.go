@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/flow"
 	"github.com/mark-jaeger/ccc/internal/testutil"
+	"github.com/mark-jaeger/ccc/zmx"
 )
 
 // slowReader wraps an io.Reader and returns at most one byte per Read call.
@@ -33,7 +33,7 @@ func newSlowReader(s string) *slowReader {
 }
 
 func TestProjectFlow_CreateNewSession(t *testing.T) {
-	t.Skip("TODO: update testutil for abduco")
+	t.Skip("TODO: update testutil for zmx")
 
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
@@ -60,13 +60,13 @@ func TestProjectFlow_CreateNewSession(t *testing.T) {
 }
 
 func TestProjectFlow_AttachExistingSession(t *testing.T) {
-	t.Skip("TODO: update testutil for abduco")
+	t.Skip("TODO: update testutil for zmx")
 
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 
-	// Pre-create a session using abduco command
-	createCmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
+	// Pre-create a session using zmx command
+	createCmd := zmx.BuildCreateCommand("ccc.myapp.main", "/tmp")
 	if _, err := tt.Run(createCmd); err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -92,17 +92,17 @@ func TestProjectFlow_AttachExistingSession(t *testing.T) {
 }
 
 func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
-	t.Skip("TODO: update testutil for abduco")
+	t.Skip("TODO: update testutil for zmx")
 
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 
 	// Create sessions for two different projects
-	cmd1 := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
+	cmd1 := zmx.BuildCreateCommand("ccc.myapp.main", "/tmp")
 	if _, err := tt.Run(cmd1); err != nil {
 		t.Fatalf("create myapp failed: %v", err)
 	}
-	cmd2 := abduco.BuildCreateCommand("ccc.other.main", "/tmp", "")
+	cmd2 := zmx.BuildCreateCommand("ccc.other.main", "/tmp")
 	if _, err := tt.Run(cmd2); err != nil {
 		t.Fatalf("create other failed: %v", err)
 	}
@@ -132,13 +132,13 @@ func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
 }
 
 func TestSessionFlow_KillSession(t *testing.T) {
-	t.Skip("TODO: update testutil for abduco")
+	t.Skip("TODO: update testutil for zmx")
 
 	t.Parallel()
 	tt := testutil.NewTestTmux(t)
 
 	// Create a session
-	cmd := abduco.BuildCreateCommand("ccc.myapp.main", "/tmp", "")
+	cmd := zmx.BuildCreateCommand("ccc.myapp.main", "/tmp")
 	if _, err := tt.Run(cmd); err != nil {
 		t.Fatalf("create session failed: %v", err)
 	}

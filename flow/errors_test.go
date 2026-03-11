@@ -7,70 +7,70 @@ import (
 	"testing"
 )
 
-func TestCheckAbducoFound(t *testing.T) {
+func TestCheckZmxFound(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckAbduco(in, out, runner)
+	err := CheckZmx(in, out, runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestCheckAbducoNotFoundThenInstalled(t *testing.T) {
+func TestCheckZmxNotFoundThenInstalled(t *testing.T) {
 	runner := newMockRunner()
 
 	// First call fails, second succeeds (after shell)
 	callCount := 0
 	origRun := runner.Run
 	_ = origRun
-	// Override Run to track call count for "command -v abduco"
+	// Override Run to track call count for "command -v zmx"
 	runner.responses["uname -s"] = "Linux"
 
-	customRunner := &checkAbducoRunner{
-		mockRunner:   runner,
-		abducoCalls: 0,
+	customRunner := &checkZmxRunner{
+		mockRunner: runner,
+		zmxCalls:   0,
 	}
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckAbduco(in, out, customRunner)
+	err := CheckZmx(in, out, customRunner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out.String(), "abduco found") {
-		t.Errorf("expected 'abduco found' after recheck, got: %s", out.String())
+	if !strings.Contains(out.String(), "zmx found") {
+		t.Errorf("expected 'zmx found' after recheck, got: %s", out.String())
 	}
 	_ = callCount
 }
 
-// checkAbducoRunner fails the first "command -v abduco" call and succeeds on the second.
-type checkAbducoRunner struct {
+// checkZmxRunner fails the first "command -v zmx" call and succeeds on the second.
+type checkZmxRunner struct {
 	*mockRunner
-	abducoCalls int
+	zmxCalls int
 }
 
-func (r *checkAbducoRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v abduco") {
-		r.abducoCalls++
-		if r.abducoCalls == 1 {
+func (r *checkZmxRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v zmx") {
+		r.zmxCalls++
+		if r.zmxCalls == 1 {
 			return "", fmt.Errorf("not found")
 		}
-		return "/usr/bin/abduco", nil
+		return "/usr/bin/zmx", nil
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *checkAbducoRunner) RunInteractive(cmd string) error {
+func (r *checkZmxRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckAbducoNotFoundAfterRetry(t *testing.T) {
-	runner := &alwaysFailAbducoRunner{
+func TestCheckZmxNotFoundAfterRetry(t *testing.T) {
+	runner := &alwaysFailZmxRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Linux"
@@ -78,32 +78,32 @@ func TestCheckAbducoNotFoundAfterRetry(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckAbduco(in, out, runner)
+	err := CheckZmx(in, out, runner)
 	if err == nil {
-		t.Fatal("expected error when abduco is never found")
+		t.Fatal("expected error when zmx is never found")
 	}
-	if !strings.Contains(err.Error(), "abduco not installed") {
-		t.Errorf("expected 'abduco not installed' error, got: %v", err)
+	if !strings.Contains(err.Error(), "zmx not installed") {
+		t.Errorf("expected 'zmx not installed' error, got: %v", err)
 	}
 }
 
-type alwaysFailAbducoRunner struct {
+type alwaysFailZmxRunner struct {
 	*mockRunner
 }
 
-func (r *alwaysFailAbducoRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v abduco") {
+func (r *alwaysFailZmxRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v zmx") {
 		return "", fmt.Errorf("not found")
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *alwaysFailAbducoRunner) RunInteractive(cmd string) error {
+func (r *alwaysFailZmxRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckAbducoDarwinHint(t *testing.T) {
-	runner := &alwaysFailAbducoRunner{
+func TestCheckZmxDarwinHint(t *testing.T) {
+	runner := &alwaysFailZmxRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Darwin"
@@ -111,14 +111,14 @@ func TestCheckAbducoDarwinHint(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	_ = CheckAbduco(in, out, runner)
+	_ = CheckZmx(in, out, runner)
 
 	output := out.String()
-	if !strings.Contains(output, "brew install abduco") {
+	if !strings.Contains(output, "brew install zmx") {
 		t.Errorf("expected brew hint for Darwin, got: %s", output)
 	}
-	// On Darwin, should NOT show Ubuntu/Fedora hints
-	if strings.Contains(output, "apt install") {
-		t.Errorf("should not show apt hint on Darwin, got: %s", output)
+	// On Darwin, should NOT show Linux cargo hints
+	if strings.Contains(output, "cargo install") {
+		t.Errorf("should not show cargo hint on Darwin, got: %s", output)
 	}
 }

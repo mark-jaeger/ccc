@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark-jaeger/ccc/abduco"
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/ui"
+	"github.com/mark-jaeger/ccc/zmx"
 )
 
 // mockRunner implements the Runner interface for testing.
@@ -56,12 +56,10 @@ func TestProjectFlowSelectProject(t *testing.T) {
 	runner := newMockRunner()
 	// "test -d" for path validation
 	runner.responses["test -d"] = ""
-	// abduco check
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
-	// abduco list returns empty (no sessions)
-	runner.responses["abduco 2>&1"] = ""
-	// abduco create session
-	runner.responses["abduco -n"] = ""
+	// zmx check
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
+	// zmx list returns empty (no sessions)
+	runner.responses["zmx list"] = ""
 
 	projects := &config.ProjectsConfig{
 		Projects: map[string]config.Project{
@@ -161,9 +159,8 @@ func TestProjectFlowScanNotAvailable(t *testing.T) {
 
 func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
-	runner.responses["abduco 2>&1"] = ""
-	runner.responses["abduco -n"] = ""
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
+	runner.responses["zmx list"] = ""
 
 	// No user input needed - auto-naming
 	in := strings.NewReader("")
@@ -186,9 +183,9 @@ func TestSessionFlowZeroSessionsCreatesNew(t *testing.T) {
 
 func TestSessionFlowOneSessionShowsMenu(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
-	// One session in abduco format (status char + tab + day + date + time + tab + PID + tab + name)
-	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
+	// One session in zmx list format (tab-separated key=value pairs)
+	runner.responses["zmx list"] = "session_name=ccc.myapp.main\tpid=12345\tclients=0\tstarted_in=/home/user/myapp"
 
 	// Select session 1 from menu
 	in := strings.NewReader("1\n")
@@ -210,9 +207,9 @@ func TestSessionFlowOneSessionShowsMenu(t *testing.T) {
 
 func TestKillSessionConfirmed(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["kill "] = ""
+	runner.responses["zmx kill"] = ""
 
-	sessions := []abduco.Session{
+	sessions := []zmx.Session{
 		{Name: "ccc.myapp.main", Project: "myapp", Suffix: "main", PID: 12345},
 	}
 	item := ui.MenuItem{Key: "ccc.myapp.main", Label: "ccc.myapp.main"}
@@ -234,9 +231,9 @@ func TestKillSessionConfirmed(t *testing.T) {
 
 func TestKillSessionExternalWarning(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["kill "] = ""
+	runner.responses["zmx kill"] = ""
 
-	sessions := []abduco.Session{
+	sessions := []zmx.Session{
 		{Name: "myapp-extra", External: true, PID: 12346},
 	}
 	item := ui.MenuItem{Key: "myapp-extra", Label: "myapp-extra"}
@@ -263,7 +260,7 @@ func TestKillSessionDeclined(t *testing.T) {
 	runner := newMockRunner()
 	// Note: no kill response needed - command shouldn't be called
 
-	sessions := []abduco.Session{
+	sessions := []zmx.Session{
 		{Name: "ccc.myapp.main", Project: "myapp", Suffix: "main", PID: 12345},
 	}
 	item := ui.MenuItem{Key: "ccc.myapp.main", Label: "ccc.myapp.main"}
@@ -285,8 +282,8 @@ func TestKillSessionDeclined(t *testing.T) {
 
 func TestAttachSessionNoClients(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
-	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
+	runner.responses["zmx list"] = "session_name=ccc.myapp.main\tpid=12345\tclients=0\tstarted_in=/home/user/myapp"
 
 	// Select session 1 from menu
 	in := strings.NewReader("1\n")
@@ -302,20 +299,20 @@ func TestAttachSessionNoClients(t *testing.T) {
 	}
 	found := false
 	for _, cmd := range runner.interactive {
-		if strings.Contains(cmd, "abduco -a") {
+		if strings.Contains(cmd, "zmx attach") {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected abduco -a in interactive commands")
+		t.Error("expected zmx attach in interactive commands")
 	}
 }
 
 func TestAttachSessionExternalDeclined(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
 	// One external session (no ccc. prefix)
-	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12347\tmyapp"
+	runner.responses["zmx list"] = "session_name=myapp\tpid=12347\tclients=0\tstarted_in=/tmp"
 
 	// Select session 1, then decline external prompt
 	in := strings.NewReader("1\nn\n")
@@ -331,29 +328,6 @@ func TestAttachSessionExternalDeclined(t *testing.T) {
 	}
 	if len(runner.interactive) != 0 {
 		t.Error("expected no RunInteractive when user declines")
-	}
-}
-
-func TestAttachSessionDead(t *testing.T) {
-	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
-	// One dead session (+ status)
-	runner.responses["abduco 2>&1"] = "+\tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
-
-	// Select session 1
-	in := strings.NewReader("1\n")
-	out := &bytes.Buffer{}
-
-	err := SessionFlow(in, out, runner, "myapp", "/home/user/myapp")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(out.String(), "is dead") {
-		t.Errorf("expected dead session message, got: %s", out.String())
-	}
-	if len(runner.interactive) != 0 {
-		t.Error("expected no RunInteractive for dead session")
 	}
 }
 
@@ -556,9 +530,9 @@ func TestDeleteProjectSaveError(t *testing.T) {
 
 func TestSessionFlowMultipleSessions(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
 	// Two sessions for the project
-	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main\n \tThu 2024-01-01 12:01:00\t12346\tccc.myapp.2"
+	runner.responses["zmx list"] = "session_name=ccc.myapp.main\tpid=12345\tclients=0\tstarted_in=/home/user/myapp\nsession_name=ccc.myapp.2\tpid=12346\tclients=0\tstarted_in=/home/user/myapp"
 
 	// Select session 2 from menu
 	in := strings.NewReader("2\n")
@@ -587,10 +561,9 @@ func TestSessionFlowMultipleSessions(t *testing.T) {
 
 func TestSessionFlowNewSession(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v abduco"] = "/usr/bin/abduco"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
 	// One existing session
-	runner.responses["abduco 2>&1"] = " \tThu 2024-01-01 12:00:00\t12345\tccc.myapp.main"
-	runner.responses["abduco -n"] = ""
+	runner.responses["zmx list"] = "session_name=ccc.myapp.main\tpid=12345\tclients=0\tstarted_in=/home/user/myapp"
 
 	// Select 'n' for new session
 	in := strings.NewReader("n\n")
