@@ -1,4 +1,4 @@
-// ccc is a CLI tool for managing abduco sessions on local and remote machines.
+// ccc is a CLI tool for managing zmx sessions on local and remote machines.
 package main
 
 import (
@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/mark-jaeger/ccc/flow"
+	"github.com/mark-jaeger/ccc/tui"
 )
 
 // version is set at build time via ldflags; defaults to "dev" for local builds.
@@ -26,18 +27,11 @@ func main() {
 
 	// Auto-detect: if running over SSH, use local mode
 	if !isLocal && flow.IsSSHSession() {
-		fmt.Println("\n  You're already on this machine via SSH.")
-		fmt.Println("  Switching to local mode (no SSH hop).")
 		isLocal = true
 	}
 
-	var err error
-	if isLocal {
-		err = flow.RunLocalMode(os.Stdin, os.Stdout)
-	} else {
-		err = flow.RunRemoteMode(os.Stdin, os.Stdout, args)
-	}
-	if err != nil {
+	// Run the TUI
+	if err := tui.Run(isLocal); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
