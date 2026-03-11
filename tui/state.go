@@ -12,6 +12,7 @@ const (
 	StateCreatingSession
 	StateConnecting
 	StateError
+	StateHelp
 )
 
 // String returns the state name for debugging.
@@ -31,6 +32,8 @@ func (s State) String() string {
 		return "Connecting"
 	case StateError:
 		return "Error"
+	case StateHelp:
+		return "Help"
 	default:
 		return "Unknown"
 	}

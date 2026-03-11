@@ -7,6 +7,9 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/zmx"
 )
 
 // Model is the main application model.
@@ -35,6 +38,10 @@ type Model struct {
 
 	// Mode (remote vs local)
 	isLocal bool
+
+	// Help state
+	showHelp  bool
+	prevState State // state before showing help
 }
 
 // New creates a new TUI model.
@@ -61,13 +68,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Lists will be resized when created
+		// Resize lists to fit new dimensions
+		h := msg.Height - 2 // room for padding
+		m.hostList.SetSize(msg.Width, h)
+		m.projectList.SetSize(msg.Width, h-2) // room for breadcrumb
+		m.sessionList.SetSize(msg.Width, h-2)
 		return m, nil
 
 	case tea.KeyMsg:
 		// Global quit
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
+		}
+
+		// Toggle help view
+		if key.Matches(msg, m.keys.Help) {
+			if m.showHelp {
+				m.showHelp = false
+				m.state = m.prevState
+			} else {
+				m.showHelp = true
+				m.prevState = m.state
+				m.state = StateHelp
+			}
+			return m, nil
 		}
 
 		// Handle back navigation (only when not filtering)
@@ -128,6 +152,10 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleBack navigates up one level.
 func (m Model) handleBack() (tea.Model, tea.Cmd) {
 	switch m.state {
+	case StateHelp:
+		m.showHelp = false
+		m.state = m.prevState
+		return m, nil
 	case StateSessionSelect:
 		m.state = StateProjectSelect
 		m.selectedProject = ""
@@ -158,6 +186,10 @@ func (m Model) isFiltering() bool {
 
 // View implements tea.Model.
 func (m Model) View() string {
+	if m.showHelp {
+		return m.helpView()
+	}
+
 	if m.err != nil {
 		return ErrorStyle.Render("Error: " + m.err.Error())
 	}
@@ -175,6 +207,8 @@ func (m Model) View() string {
 		return m.spinner.View() + " Connecting..."
 	case StateError:
 		return ErrorStyle.Render("Error: " + m.err.Error())
+	case StateHelp:
+		return m.helpView()
 	}
 	return ""
 }
@@ -192,4 +226,56 @@ func (m Model) breadcrumb() string {
 		return ""
 	}
 	return BreadcrumbStyle.Render(strings.Join(parts, " > "))
+}
+
+// SetHosts initializes the host list with data.
+func (m *Model) SetHosts(hosts map[string]config.Host, names []string) {
+	m.hostList = NewHostList(hosts, names, m.width, m.height-2)
+	m.state = StateHostSelect
+}
+
+// SetProjects initializes the project list with data.
+func (m *Model) SetProjects(projects map[string]config.Project, keys []string) {
+	m.projectList = NewProjectList(projects, keys, m.width, m.height-4)
+	// -4 for breadcrumb and padding
+}
+
+// SetSessions initializes the session list with data.
+func (m *Model) SetSessions(sessions []zmx.Session, projectKey string) {
+	if len(sessions) == 0 {
+		m.sessionList = EmptySessionList(projectKey, m.width, m.height-4)
+	} else {
+		m.sessionList = NewSessionList(sessions, projectKey, m.width, m.height-4)
+	}
+}
+
+// helpView renders the help screen.
+func (m Model) helpView() string {
+	help := `
+ccc - Terminal Session Manager
+
+Navigation:
+  j/k       Move down/up
+  g/G       Go to top/bottom
+  /         Filter list
+  Enter     Select item
+  Esc       Go back / Clear filter
+  q         Quit
+
+Host Screen:
+  Enter     Connect to host
+
+Project Screen:
+  s         Scan for new projects
+  d         Delete project
+  Enter     View sessions
+
+Session Screen:
+  n         New session
+  x         Kill session
+  Enter     Attach to session
+
+Press ? to close this help.
+`
+	return lipgloss.NewStyle().Padding(1, 2).Render(help)
 }
