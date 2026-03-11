@@ -37,6 +37,36 @@
 
 ---
 
+## Post-v1.0 Testing Notes (2026-03-11)
+
+### What We Tried
+- Tested abduco on mj-dev (Ubuntu) with SSH from Mac
+- Added `CCC_DETACH_KEY` env var for custom detach key (e.g., `^a` for Ctrl+a)
+- Tried different shell configurations (bash, zsh, $SHELL)
+
+### Issues Found
+1. **Reattach behavior**: Blank screen on reattach, requires typing + Enter to refresh
+2. **No persistent scrollback**: Unlike tmux, abduco has no scrollback buffer — history lost on detach
+3. **Color issues**: TUI apps (Claude Code) don't render colors correctly
+4. **Scroll behavior**: Mouse scroll triggers command history navigation, not terminal scrollback
+
+### Root Cause Analysis
+abduco is a minimal PTY passthrough — it doesn't maintain terminal state like tmux does. While this means native terminal features work *while attached*, the tradeoff is:
+- No scrollback persistence across detach/reattach
+- No automatic screen redraw on reattach
+- TUI apps may not handle the attach/detach lifecycle gracefully
+
+### Conclusion
+abduco works well for simple shell sessions but may not be ideal for complex TUI applications like Claude Code. The v1.0 migration is technically complete, but real-world testing revealed usability gaps for the primary use case.
+
+### Options for Next Steps
+1. **Return to tmux** with better passthrough config
+2. **Investigate dtach** (another alternative)
+3. **Hybrid approach** — abduco for simple sessions, tmux for Claude Code
+4. **Accept limitations** — use abduco with workarounds (Ctrl+L to refresh)
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
