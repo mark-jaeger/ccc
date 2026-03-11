@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-03-11)
 
 - **Milestone:** v2.0
 - **Phase:** 1 of 1 (zmx-bubbletea)
-- **Current Plan:** Not started
-- **Status:** Ready to plan Phase 1
+- **Current Plan:** 01-01
+- **Status:** Ready to execute
 
 ## Key Decisions
 
