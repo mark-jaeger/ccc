@@ -111,6 +111,22 @@ func loadSessionsCmd(runner Runner, projectKey string) tea.Cmd {
 	}
 }
 
+// loadSessionsLocalCmd lists zmx sessions locally.
+func loadSessionsLocalCmd(projectKey string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("sh", "-c", zmx.BuildListCommand())
+		out, err := cmd.Output()
+		if err != nil {
+			// Treat as no sessions
+			return sessionsLoadedMsg{sessions: nil}
+		}
+
+		allSessions := zmx.ParseListOutput(string(out))
+		sessions := zmx.FilterSessionsForProject(allSessions, projectKey)
+		return sessionsLoadedMsg{sessions: sessions}
+	}
+}
+
 // attachSessionCmd attaches to an existing zmx session using tea.ExecProcess.
 // This hands the terminal over to zmx for full passthrough (FR-4.x).
 func attachSessionCmd(host config.Host, sessionName string) tea.Cmd {

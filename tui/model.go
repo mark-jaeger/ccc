@@ -21,7 +21,7 @@ type Model struct {
 	selectedHost    string
 	selectedProject string
 
-	// List models (will be populated by components in Plan 03)
+	// List models
 	hostList    list.Model
 	projectList list.Model
 	sessionList list.Model
@@ -42,6 +42,17 @@ type Model struct {
 	// Help state
 	showHelp  bool
 	prevState State // state before showing help
+
+	// Connection state
+	runner      Runner            // current Runner (SSH or local)
+	currentHost *config.Host      // selected host (nil in local mode)
+	hosts       map[string]config.Host
+	projects    *config.ProjectsConfig
+	sessions    []zmx.Session
+
+	// Project state for session operations
+	currentProjectKey  string
+	currentProjectPath string
 }
 
 // New creates a new TUI model.
@@ -59,7 +70,18 @@ func New(isLocal bool) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return m.spinner.Tick
+	if m.isLocal {
+		// Local mode: skip host selection, load projects directly
+		return tea.Batch(
+			m.spinner.Tick,
+			checkZmxLocalCmd(),
+			loadProjectsLocalCmd(),
+		)
+	}
+	return tea.Batch(
+		m.spinner.Tick,
+		loadHostsCmd(),
+	)
 }
 
 // Update implements tea.Model.
@@ -104,6 +126,82 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	// Message handlers for async operations
+	case hostsLoadedMsg:
+		m.hosts = msg.hosts
+		m.SetHosts(msg.hosts, msg.names)
+		return m, nil
+
+	case hostConnectedMsg:
+		m.currentHost = &msg.host
+		m.selectedHost = msg.hostName
+		m.runner = msg.runner
+		m.state = StateLoading
+		return m, tea.Batch(
+			m.spinner.Tick,
+			checkZmxCmd(m.runner),
+			loadProjectsCmd(m.runner),
+		)
+
+	case projectsLoadedMsg:
+		m.projects = msg.projects
+		m.SetProjects(msg.projects.Projects, msg.projects.SortedProjectKeys())
+		m.state = StateProjectSelect
+		return m, nil
+
+	case sessionsLoadedMsg:
+		m.sessions = msg.sessions
+		m.SetSessions(msg.sessions, m.currentProjectKey)
+		m.state = StateSessionSelect
+		return m, nil
+
+	case sessionCreatedMsg:
+		// After creating, attach to the new session
+		if m.isLocal {
+			return m, attachSessionLocalCmd(msg.name)
+		}
+		return m, attachSessionCmd(*m.currentHost, msg.name)
+
+	case sessionExitedMsg:
+		// Returned from zmx attach, refresh sessions
+		if m.isLocal {
+			return m, loadSessionsLocalCmd(m.currentProjectKey)
+		}
+		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+
+	case sessionKilledMsg:
+		// Refresh sessions after kill
+		if m.isLocal {
+			return m, loadSessionsLocalCmd(m.currentProjectKey)
+		}
+		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+
+	case scanCompleteMsg:
+		// Merge scanned projects with existing
+		if m.projects == nil {
+			m.projects = &config.ProjectsConfig{
+				Projects: make(map[string]config.Project),
+			}
+		}
+		for _, r := range msg.results {
+			m.projects.Projects[r.key] = config.Project{Path: r.path}
+		}
+		// Save and reload
+		if m.isLocal {
+			return m, saveProjectsLocalCmd(m.projects)
+		}
+		return m, saveProjectsCmd(m.runner, m.projects)
+
+	case projectDeletedMsg:
+		if m.projects != nil {
+			delete(m.projects.Projects, msg.key)
+			if m.isLocal {
+				return m, saveProjectsLocalCmd(m.projects)
+			}
+			return m, saveProjectsCmd(m.runner, m.projects)
+		}
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		m.state = StateError
@@ -132,6 +230,17 @@ func (m Model) updateState(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.hostList, cmd = m.hostList.Update(msg)
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if key.Matches(keyMsg, m.keys.Select) {
+			if item := m.hostList.SelectedItem(); item != nil {
+				hi := item.(HostItem)
+				m.state = StateConnecting
+				return m, connectHostCmd(hi.Name(), hi.Host())
+			}
+		}
+	}
+
 	return m, cmd
 }
 
@@ -139,6 +248,37 @@ func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.projectList, cmd = m.projectList.Update(msg)
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case key.Matches(keyMsg, m.keys.Select):
+			if item := m.projectList.SelectedItem(); item != nil {
+				pi := item.(ProjectItem)
+				m.currentProjectKey = pi.Key()
+				m.currentProjectPath = pi.Project().Path
+				m.selectedProject = pi.Key()
+				m.state = StateLoading
+				if m.isLocal {
+					return m, loadSessionsLocalCmd(m.currentProjectKey)
+				}
+				return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+			}
+		case key.Matches(keyMsg, m.keys.Scan):
+			m.state = StateLoading
+			if m.isLocal {
+				return m, scanProjectsLocalCmd()
+			}
+			return m, scanProjectsCmd(m.runner)
+		case key.Matches(keyMsg, m.keys.Delete):
+			if item := m.projectList.SelectedItem(); item != nil {
+				pi := item.(ProjectItem)
+				return m, func() tea.Msg {
+					return projectDeletedMsg{key: pi.Key()}
+				}
+			}
+		}
+	}
+
 	return m, cmd
 }
 
@@ -146,6 +286,33 @@ func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.sessionList, cmd = m.sessionList.Update(msg)
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case key.Matches(keyMsg, m.keys.Select):
+			if item := m.sessionList.SelectedItem(); item != nil {
+				session := item.(SessionItem).Session()
+				if m.isLocal {
+					return m, attachSessionLocalCmd(session.Name)
+				}
+				return m, attachSessionCmd(*m.currentHost, session.Name)
+			}
+		case key.Matches(keyMsg, m.keys.New):
+			if m.isLocal {
+				return m, createSessionLocalCmd(m.currentProjectKey, m.currentProjectPath, m.sessions)
+			}
+			return m, createSessionCmd(m.runner, m.currentProjectKey, m.currentProjectPath, m.sessions)
+		case key.Matches(keyMsg, m.keys.Kill):
+			if item := m.sessionList.SelectedItem(); item != nil {
+				session := item.(SessionItem).Session()
+				if m.isLocal {
+					return m, killSessionLocalCmd(session.Name)
+				}
+				return m, killSessionCmd(m.runner, session.Name)
+			}
+		}
+	}
+
 	return m, cmd
 }
 
@@ -159,12 +326,16 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 	case StateSessionSelect:
 		m.state = StateProjectSelect
 		m.selectedProject = ""
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
 	case StateProjectSelect:
 		if m.isLocal {
 			return m, tea.Quit
 		}
 		m.state = StateHostSelect
 		m.selectedHost = ""
+		m.currentHost = nil
+		m.runner = nil
 	case StateHostSelect:
 		return m, tea.Quit
 	}
