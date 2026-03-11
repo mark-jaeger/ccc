@@ -19,8 +19,8 @@ Plans:
 - [x] 01-02-PLAN.md — TUI core with state machine, styles, and keybindings
 - [x] 01-03-PLAN.md — TUI list components for hosts, projects, sessions
 - [x] 01-04-PLAN.md — Async commands and orchestration wiring
-- [ ] 01-05-PLAN.md — Main.go integration and flow deprecation
-- [ ] 01-06-PLAN.md — Tests and abduco cleanup
+- [x] 01-05-PLAN.md — Main.go integration and flow deprecation
+- [x] 01-06-PLAN.md — Tests and abduco cleanup
 
 ### Wave Structure
 
