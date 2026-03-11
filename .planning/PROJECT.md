@@ -2,7 +2,7 @@
 
 ## What This Is
 
-ccc is a CLI tool for managing persistent terminal sessions on local and remote machines over SSH. Sessions use abduco for transparent terminal passthrough — all escape sequences, scrolling, and copy/paste work natively.
+ccc is a CLI tool for managing persistent terminal sessions on local and remote machines over SSH. Sessions use zmx for transparent terminal passthrough with state restoration — all escape sequences, scrolling, clipboard, and notifications work natively.
 
 ## Core Value
 
@@ -29,7 +29,11 @@ Transparent terminal passthrough — all escape sequences, scrolling, and copy/p
 
 ### Active
 
-(None — define in next milestone)
+- Replace abduco with zmx for session persistence — v2.0
+- Bubbletea TUI for host/project/session selection — v2.0
+- Terminal passthrough: notifications, Shift+Enter, scrolling, URLs — v2.0
+- State restoration on reattach via zmx/libghostty-vt — v2.0
+- Proper TERM handling through SSH+zmx chain — v2.0
 
 ### Out of Scope
 
@@ -43,7 +47,7 @@ Transparent terminal passthrough — all escape sequences, scrolling, and copy/p
 
 Shipped v1.0 with 5,624 LOC Go. Migration removed 505 net lines (eliminated tmux workaround code).
 
-Tech stack: Go, abduco (session persistence), SSH (remote mode).
+Tech stack: Go, zmx (session persistence, v2.0+), Bubbletea (TUI, v2.0+), SSH (remote mode).
 
 Known tech debt:
 - Integration tests in `flow/flow_integration_test.go` skipped pending testutil update
@@ -63,9 +67,10 @@ Known tech debt:
 
 ## Constraints
 
-- **Dependency**: abduco must be installed on target machines
-- **Breaking change**: Existing tmux sessions from pre-v1.0 are not managed
-- **Naming convention**: Sessions must follow `ccc.{project}.{suffix}` pattern
+- **Dependency**: zmx must be installed on target machines (v2.0+), abduco for v1.x
+- **Breaking change**: Existing abduco sessions from v1.x are not managed by v2.0
+- **Naming convention**: Sessions can use zmx's native naming or `ccc.{project}.{suffix}` pattern
+- **TERM handling**: SSH must pass TERM correctly; may need `TERM=$TERM` wrapper
 
 ---
 *Last updated: 2026-03-10 after v1.0 milestone*

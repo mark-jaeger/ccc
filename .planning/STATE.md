@@ -1,68 +1,51 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: abduco migration
+milestone: v2.0
+milestone_name: zmx + Bubbletea
 current_plan: Not started
-status: archived
-last_updated: "2026-03-10T16:30:00Z"
+status: planning
+last_updated: "2026-03-11T00:00:00Z"
 progress:
   total_phases: 2
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
-# Project State: ccc abduco migration
+# Project State: ccc v2.0
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-10)
+See: .planning/PROJECT.md (updated 2026-03-11)
 
-**Core value:** Transparent terminal passthrough
-**Current focus:** v1.0 shipped — planning next milestone
+**Core value:** Transparent terminal passthrough with beautiful TUI
+**Current focus:** Planning v2.0 — zmx backend + Bubbletea UI
 
 ## Current Position
 
-- **Milestone:** v1.0
-- **Phase:** 2 of 2 (flow-migration)
+- **Milestone:** v2.0
+- **Phase:** 1 of 2 (zmx-backend)
 - **Current Plan:** Not started
-- **Status:** v1.0 milestone complete
+- **Status:** Ready to plan Phase 1
 
 ## Key Decisions
 
 | Decision | Date | Rationale |
 |----------|------|-----------|
-| Replace tmux entirely | 2026-03-10 | User only needs persistence; abduco is simpler |
-| Remove session rename | 2026-03-10 | abduco doesn't support; rarely used |
-| Use PID-based kill | 2026-03-10 | Research found pkill is dangerous |
-| Two-phase ultra-coarse | 2026-03-10 | User preference for minimum phases |
-| Session naming ccc.{project}.{suffix} | 2026-03-10 | First session gets 'main', subsequent get 2, 3, 4... |
-| Preserve leading whitespace in parser | 2026-03-10 | Status character may be space for detached sessions |
-| Delete entire tmux package | 2026-03-10 | No value in keeping dead code; clean removal |
+| zmx instead of abduco | 2026-03-11 | Tested: fixes notifications, Shift+Enter, scrolling, URLs |
+| Bubbletea TUI | 2026-03-11 | User wants nicer UI than basic menus |
+| Single milestone for both | 2026-03-11 | Cohesive rewrite, clean break from v1.x |
+| TERM passthrough via wrapper | 2026-03-11 | `TERM=$TERM zmx attach` needed for SSH |
 
 ## Blockers
 
 None.
 
-## Performance Metrics
-
-| Phase | Plan | Duration | Tasks | Files |
-|-------|------|----------|-------|-------|
-| 01 | 01 | 8min | 3 | 2 |
-| 01 | 02 | 2min | 2 | 1 |
-| 02 | 01 | 6min | 5 | 6 |
-| 02 | 02 | 2min | 3 | 4 |
-
 ## Session Log
 
 | Date | Session | Outcome |
 |------|---------|---------|
-| 2026-03-10 | Project init | Created PROJECT.md, research, requirements, roadmap |
-| 2026-03-10 | Plan 01-01 | Completed abduco package with Session struct, command builders, parser, filters |
-| 2026-03-10 | Plan 01-02 | Completed abduco package tests - 18 unit tests, 4 integration tests with skip logic |
-| 2026-03-10 | Plan 02-01 | Migrated flow package from tmux to abduco - 5 tasks, 6 files |
-| 2026-03-10 | Plan 02-02 | Deleted tmux package (884 lines), updated CLAUDE.md - 3 tasks, 4 files |
+| 2026-03-11 | Milestone planning | Tested zmx, confirmed it works, defined v2.0 scope |
 
 ---
-*Last updated: 2026-03-10*
-*Last session: Completed 02-02-PLAN.md*
+*Last updated: 2026-03-11*
