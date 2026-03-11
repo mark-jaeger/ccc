@@ -81,7 +81,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case errMsg:
-		m.err = error(msg)
+		m.err = msg.err
 		m.state = StateError
 		return m, nil
 	}
@@ -193,6 +193,3 @@ func (m Model) breadcrumb() string {
 	}
 	return BreadcrumbStyle.Render(strings.Join(parts, " > "))
 }
-
-// errMsg is a custom error message type.
-type errMsg error
