@@ -90,11 +90,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Resize lists to fit new dimensions
+		// Resize lists to fit new dimensions (only if initialized)
 		h := msg.Height - 2 // room for padding
-		m.hostList.SetSize(msg.Width, h)
-		m.projectList.SetSize(msg.Width, h-2) // room for breadcrumb
-		m.sessionList.SetSize(msg.Width, h-2)
+		if len(m.hostList.Items()) > 0 || m.hostList.FilterState() != list.Unfiltered {
+			m.hostList.SetSize(msg.Width, h)
+		}
+		if len(m.projectList.Items()) > 0 || m.projectList.FilterState() != list.Unfiltered {
+			m.projectList.SetSize(msg.Width, h-2) // room for breadcrumb
+		}
+		if len(m.sessionList.Items()) > 0 || m.sessionList.FilterState() != list.Unfiltered {
+			m.sessionList.SetSize(msg.Width, h-2)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
