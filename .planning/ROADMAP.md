@@ -10,40 +10,25 @@
 
 **Goal:** Replace abduco with zmx AND replace basic menus with Bubbletea TUI
 
-### Requirements Covered
+**Requirements:** [FR-1.1, FR-1.2, FR-1.3, FR-1.4, FR-1.5, FR-1.6, FR-1.7, FR-1.8, FR-2.1, FR-2.2, FR-2.3, FR-2.4, FR-2.5, FR-2.6, FR-2.7, FR-2.8, FR-2.9, FR-2.10, FR-3.1, FR-3.2, FR-3.3, FR-3.4, FR-3.5, FR-3.6, FR-3.7, FR-4.1, FR-4.2, FR-4.3, FR-4.4, FR-4.5, FR-4.6]
 
-All requirements from REQUIREMENTS.md:
-- FR-1.x (zmx backend)
-- FR-2.x (Bubbletea TUI)
-- FR-3.x (orchestration)
-- FR-4.x (terminal passthrough)
+**Plans:** 6 plans
 
-### Key Tasks
+Plans:
+- [ ] 01-01-PLAN.md — zmx package with command builders and session parsing
+- [ ] 01-02-PLAN.md — TUI core with state machine, styles, and keybindings
+- [ ] 01-03-PLAN.md — TUI list components for hosts, projects, sessions
+- [ ] 01-04-PLAN.md — Async commands and orchestration wiring
+- [ ] 01-05-PLAN.md — Main.go integration and flow deprecation
+- [ ] 01-06-PLAN.md — Tests and abduco cleanup
 
-**zmx Package:**
-1. Create `zmx/` package with:
-   - `zmx.Session` struct (name, pid, clients, startedIn)
-   - `BuildListCommand()` → `zmx list`
-   - `BuildAttachCommand(name)` → `TERM=$TERM zmx attach <name>`
-   - `BuildKillCommand(name)` → `zmx kill <name>`
-   - `ParseListOutput(string)` → `[]Session`
-   - `FilterSessionsForProject(sessions, project)` → `[]Session`
+### Wave Structure
 
-**Bubbletea TUI:**
-2. Create `tui/` package with:
-   - Main model with state machine (host → project → session)
-   - `hostList` component (bubbles/list with fuzzy filter)
-   - `projectList` component
-   - `sessionList` component with create/attach/kill actions
-   - lipgloss styling
-   - Custom keymap (vim j/k, g/G, /)
-   - `tea.ExecProcess` for zmx handoff
-
-**Integration:**
-3. Update `main.go` to use TUI
-4. Delete `abduco/` package
-5. Deprecate/remove old `ui/` package
-6. Tests
+| Wave | Plans | Description |
+|------|-------|-------------|
+| 1 | 01-01, 01-02 | zmx package + TUI core (parallel) |
+| 2 | 01-03, 01-04 | TUI components + async commands |
+| 3 | 01-05, 01-06 | Integration + cleanup |
 
 ### Success Criteria
 
@@ -51,10 +36,6 @@ All requirements from REQUIREMENTS.md:
 - zmx sessions work (create/attach/kill)
 - Terminal passthrough works (notifications, Shift+Enter, scrolling, URLs)
 - State restoration on reattach
-
-### Estimated Complexity
-
-~4-5 plans (zmx package, TUI core, TUI components, integration, cleanup)
 
 ---
 
