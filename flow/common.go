@@ -27,6 +27,19 @@ type Runner interface {
 	RunInteractive(cmd string) error
 }
 
+// CheckZmx checks if zmx is installed on the target system.
+// Returns nil if zmx is available, error otherwise.
+func CheckZmx(runner Runner) error {
+	_, err := runner.Run("command -v zmx")
+	if err != nil {
+		return fmt.Errorf("zmx not installed: install with 'brew install neurosnap/tap/zmx'")
+	}
+	return nil
+}
+
+// Deprecated: ProjectFlow is replaced by the TUI package.
+// Kept for backwards compatibility and testing.
+//
 // ProjectFlow handles project selection -> session selection -> attach/create.
 // onScan is an optional callback invoked when the user selects [s] Scan.
 // onSave is an optional callback invoked after a project is removed, allowing
@@ -118,6 +131,9 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 	}
 }
 
+// Deprecated: SessionFlow is replaced by the TUI package.
+// Kept for backwards compatibility and testing.
+//
 // SessionFlow handles session listing -> attach or create.
 func SessionFlow(in io.Reader, out io.Writer, runner Runner, projectKey, projectPath string) error {
 	if err := CheckAbduco(in, out, runner); err != nil {
