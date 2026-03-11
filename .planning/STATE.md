@@ -6,7 +6,7 @@ current_plan: Not started
 status: planning
 last_updated: "2026-03-11T00:00:00Z"
 progress:
-  total_phases: 2
+  total_phases: 1
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-11)
 ## Current Position
 
 - **Milestone:** v2.0
-- **Phase:** 1 of 2 (zmx-backend)
+- **Phase:** 1 of 1 (zmx-bubbletea)
 - **Current Plan:** Not started
 - **Status:** Ready to plan Phase 1
 
