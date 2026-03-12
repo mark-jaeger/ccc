@@ -5,13 +5,16 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	// Adaptive colors for light/dark terminals
 	subtle    = lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
-	highlight = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
+	highlight = lipgloss.AdaptiveColor{Light: "#CC8E50", Dark: "#FFB270"} // RGB 255,178,112
 	special   = lipgloss.AdaptiveColor{Light: "#43BF6D", Dark: "#73F59F"}
+
+	// SelectionIndicator shown before selected items.
+	SelectionIndicator = "▸ "
 
 	// TitleStyle for screen headers.
 	TitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFDF5")).
-			Background(highlight).
+			Foreground(lipgloss.Color("#000000")).
+			Background(lipgloss.Color("#FFB270")).
 			Padding(0, 1)
 
 	// ItemStyle for unselected menu items.
@@ -19,7 +22,7 @@ var (
 
 	// SelectedItemStyle for the currently highlighted item.
 	SelectedItemStyle = lipgloss.NewStyle().
-				PaddingLeft(2).
+				PaddingLeft(0).
 				Foreground(highlight)
 
 	// StatusBarStyle for the bottom status bar.

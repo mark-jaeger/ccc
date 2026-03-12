@@ -59,6 +59,9 @@ type projectDeletedMsg struct {
 	key string
 }
 
+// zmxAvailableMsg is sent when zmx is confirmed installed.
+type zmxAvailableMsg struct{}
+
 // errMsg wraps errors for display.
 type errMsg struct {
 	err error

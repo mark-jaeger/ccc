@@ -159,32 +159,39 @@ func attachSessionLocalCmd(sessionName string) tea.Cmd {
 	})
 }
 
-// createSessionCmd creates a new zmx session (remote mode).
-func createSessionCmd(runner Runner, projectKey, projectPath string, existing []zmx.Session) tea.Cmd {
+// createSessionCmd creates and attaches to a new zmx session (remote mode).
+// Uses tea.ExecProcess since zmx attach is interactive.
+func createSessionCmd(host config.Host, projectKey, projectPath string, existing []zmx.Session) tea.Cmd {
 	name := zmx.NextAutoName(projectKey, existing)
 
-	return func() tea.Msg {
-		// Create the session via SSH
-		createCmd := zmx.BuildCreateCommand(name, projectPath)
-		if _, err := runner.Run(createCmd); err != nil {
-			return errMsg{err}
-		}
-		return sessionCreatedMsg{name: name}
+	// Build SSH command with zmx create (cd + attach)
+	args := []string{"-t", host.Address}
+	if host.User != "" {
+		args = []string{"-t", host.User + "@" + host.Address}
 	}
+	if host.Port != 0 {
+		args = append([]string{"-p", fmt.Sprintf("%d", host.Port)}, args...)
+	}
+	args = append(args, zmx.BuildCreateCommand(name, projectPath))
+
+	cmd := exec.Command("ssh", args...)
+	cmd.Env = os.Environ()
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return sessionExitedMsg{err: err}
+	})
 }
 
-// createSessionLocalCmd creates a session in local mode.
+// createSessionLocalCmd creates and attaches to a session in local mode.
 func createSessionLocalCmd(projectKey, projectPath string, existing []zmx.Session) tea.Cmd {
 	name := zmx.NextAutoName(projectKey, existing)
 
-	return func() tea.Msg {
-		// Create locally using exec
-		cmd := exec.Command("sh", "-c", zmx.BuildCreateCommand(name, projectPath))
-		if err := cmd.Run(); err != nil {
-			return errMsg{err}
-		}
-		return sessionCreatedMsg{name: name}
-	}
+	cmd := exec.Command("sh", "-c", zmx.BuildCreateCommand(name, projectPath))
+	cmd.Env = os.Environ()
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return sessionExitedMsg{err: err}
+	})
 }
 
 // killSessionCmd kills a zmx session.
@@ -297,13 +304,23 @@ func saveProjectsLocalCmd(projects *config.ProjectsConfig) tea.Cmd {
 	}
 }
 
+const zmxInstallMsg = `zmx not found
+
+Install zmx for your platform:
+
+  macOS:   brew install neurosnap/tap/zmx
+  Ubuntu:  cargo install zmx
+  Windows: cargo install zmx
+
+See https://github.com/neurosnap/zmx for details.`
+
 // checkZmxCmd checks if zmx is installed on the target.
 func checkZmxCmd(runner Runner) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := runner.Run(zmx.BuildCheckCommand()); err != nil {
-			return errMsg{fmt.Errorf("zmx not found on remote: install with 'brew install neurosnap/tap/zmx'")}
+			return errMsg{fmt.Errorf(zmxInstallMsg)}
 		}
-		return nil // zmx is available
+		return zmxAvailableMsg{}
 	}
 }
 
@@ -312,7 +329,7 @@ func checkZmxLocalCmd() tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildCheckCommand())
 		if err := cmd.Run(); err != nil {
-			return errMsg{fmt.Errorf("zmx not found: install with 'brew install neurosnap/tap/zmx'")}
+			return errMsg{fmt.Errorf(zmxInstallMsg)}
 		}
 		return nil // zmx is available
 	}

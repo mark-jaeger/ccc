@@ -143,11 +143,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedHost = msg.hostName
 		m.runner = msg.runner
 		m.state = StateLoading
+		// Check zmx first, only load projects if available
 		return m, tea.Batch(
 			m.spinner.Tick,
 			checkZmxCmd(m.runner),
-			loadProjectsCmd(m.runner),
 		)
+
+	case zmxAvailableMsg:
+		// zmx is installed, now load projects
+		return m, loadProjectsCmd(m.runner)
 
 	case projectsLoadedMsg:
 		m.projects = msg.projects
@@ -210,6 +214,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		// Fatal errors: quit TUI so error prints to normal terminal (selectable)
+		if strings.Contains(msg.err.Error(), "zmx not found") {
+			return m, tea.Quit
+		}
 		m.state = StateError
 		return m, nil
 	}
@@ -307,7 +315,7 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.isLocal {
 				return m, createSessionLocalCmd(m.currentProjectKey, m.currentProjectPath, m.sessions)
 			}
-			return m, createSessionCmd(m.runner, m.currentProjectKey, m.currentProjectPath, m.sessions)
+			return m, createSessionCmd(*m.currentHost, m.currentProjectKey, m.currentProjectPath, m.sessions)
 		case key.Matches(keyMsg, m.keys.Kill):
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
@@ -371,19 +379,22 @@ func (m Model) View() string {
 		return ErrorStyle.Render("Error: " + m.err.Error())
 	}
 
+	// Top padding for generous whitespace
+	pad := "\n\n"
+
 	switch m.state {
 	case StateLoading:
-		return m.spinner.View() + " Loading..."
+		return pad + m.spinner.View() + " Loading..."
 	case StateHostSelect:
-		return m.hostList.View()
+		return pad + m.hostList.View()
 	case StateProjectSelect:
-		return m.breadcrumb() + "\n" + m.projectList.View()
+		return pad + m.breadcrumb() + "\n" + m.projectList.View()
 	case StateSessionSelect:
-		return m.breadcrumb() + "\n" + m.sessionList.View()
+		return pad + m.breadcrumb() + "\n" + m.sessionList.View()
 	case StateConnecting:
-		return m.spinner.View() + " Connecting..."
+		return pad + m.spinner.View() + " Connecting..."
 	case StateError:
-		return ErrorStyle.Render("Error: " + m.err.Error())
+		return pad + ErrorStyle.Render("Error: " + m.err.Error())
 	case StateHelp:
 		return m.helpView()
 	}
@@ -451,6 +462,9 @@ Session Screen:
   n         New session
   x         Kill session
   Enter     Attach to session
+
+Inside zmx session:
+  Ctrl+\    Detach (return to ccc)
 
 Press ? to close this help.
 `
