@@ -6,10 +6,10 @@ import (
 )
 
 // NewProjectList creates a list model for project selection.
-func NewProjectList(projects map[string]config.Project, keys []string, width, height int) list.Model {
-	items := make([]list.Item, len(keys))
-	for i, k := range keys {
-		items[i] = NewProjectItem(k, projects[k])
+func NewProjectList(projects []config.Project, width, height int) list.Model {
+	items := make([]list.Item, len(projects))
+	for i, p := range projects {
+		items[i] = NewProjectItem(p.Name, p)
 	}
 
 	l := list.New(items, newDelegate(), width, height)

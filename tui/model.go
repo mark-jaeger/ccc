@@ -46,7 +46,7 @@ type Model struct {
 	// Connection state
 	runner      Runner            // current Runner (SSH or local)
 	currentHost *config.Host      // selected host (nil in local mode)
-	hosts       map[string]config.Host
+	hosts       []config.Host
 	projects    *config.ProjectsConfig
 	sessions    []zmx.Session
 
@@ -155,7 +155,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectsLoadedMsg:
 		m.projects = msg.projects
-		m.SetProjects(msg.projects.Projects, msg.projects.SortedProjectKeys())
+		m.SetProjects(msg.projects.Projects)
 		m.state = StateProjectSelect
 		return m, nil
 
@@ -190,11 +190,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Merge scanned projects with existing
 		if m.projects == nil {
 			m.projects = &config.ProjectsConfig{
-				Projects: make(map[string]config.Project),
+				Projects: []config.Project{},
 			}
 		}
 		for _, r := range msg.results {
-			m.projects.Projects[r.key] = config.Project{Path: r.path}
+			// Add or update project by name
+			found := false
+			for i, existing := range m.projects.Projects {
+				if existing.Name == r.key {
+					m.projects.Projects[i] = config.Project{Name: r.key, Path: r.path}
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.projects.Projects = append(m.projects.Projects, config.Project{Name: r.key, Path: r.path})
+			}
 		}
 		// Save and reload
 		if m.isLocal {
@@ -204,7 +215,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectDeletedMsg:
 		if m.projects != nil {
-			delete(m.projects.Projects, msg.key)
+			for i, p := range m.projects.Projects {
+				if p.Name == msg.key {
+					m.projects.Projects = append(m.projects.Projects[:i], m.projects.Projects[i+1:]...)
+					break
+				}
+			}
 			if m.isLocal {
 				return m, saveProjectsLocalCmd(m.projects)
 			}
@@ -417,14 +433,14 @@ func (m Model) breadcrumb() string {
 }
 
 // SetHosts initializes the host list with data.
-func (m *Model) SetHosts(hosts map[string]config.Host, names []string) {
+func (m *Model) SetHosts(hosts []config.Host, names []string) {
 	m.hostList = NewHostList(hosts, names, m.width, m.height-2)
 	m.state = StateHostSelect
 }
 
 // SetProjects initializes the project list with data.
-func (m *Model) SetProjects(projects map[string]config.Project, keys []string) {
-	m.projectList = NewProjectList(projects, keys, m.width, m.height-4)
+func (m *Model) SetProjects(projects []config.Project) {
+	m.projectList = NewProjectList(projects, m.width, m.height-4)
 	// -4 for breadcrumb and padding
 }
 

@@ -8,37 +8,59 @@ import (
 
 // Project represents a tracked project with its remote path.
 type Project struct {
+	Name string `toml:"name"`
 	Path string `toml:"path"`
 }
 
 // ProjectsConfig holds the set of tracked projects.
 type ProjectsConfig struct {
-	Projects map[string]Project `toml:"projects"`
+	Projects []Project `toml:"projects"`
 }
 
-// ParseProjectsConfig parses TOML data into a ProjectsConfig.
+// oldProjectsConfig is the legacy map-based format
+type oldProjectsConfig struct {
+	Projects map[string]struct {
+		Path string `toml:"path"`
+	} `toml:"projects"`
+}
+
+// ParseProjectsConfig parses TOML data, migrating from old format if needed.
 func ParseProjectsConfig(data []byte) (*ProjectsConfig, error) {
+	// Try new array format first
 	var cfg ProjectsConfig
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	if err := toml.Unmarshal(data, &cfg); err == nil && len(cfg.Projects) > 0 {
+		return &cfg, nil
+	}
+
+	// Try old map format
+	var oldCfg oldProjectsConfig
+	if err := toml.Unmarshal(data, &oldCfg); err != nil {
 		return nil, err
 	}
-	if cfg.Projects == nil {
-		cfg.Projects = make(map[string]Project)
+
+	// Migrate: convert map to slice, sorted alphabetically
+	if len(oldCfg.Projects) > 0 {
+		names := make([]string, 0, len(oldCfg.Projects))
+		for name := range oldCfg.Projects {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		cfg.Projects = make([]Project, len(names))
+		for i, name := range names {
+			cfg.Projects[i] = Project{
+				Name: name,
+				Path: oldCfg.Projects[name].Path,
+			}
+		}
+		return &cfg, nil
 	}
+
+	cfg.Projects = []Project{}
 	return &cfg, nil
 }
 
 // SerializeProjectsConfig serializes a ProjectsConfig to TOML bytes.
 func SerializeProjectsConfig(cfg *ProjectsConfig) ([]byte, error) {
 	return toml.Marshal(cfg)
-}
-
-// SortedProjectKeys returns the project keys in alphabetical order.
-func (c *ProjectsConfig) SortedProjectKeys() []string {
-	keys := make([]string, 0, len(c.Projects))
-	for key := range c.Projects {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
