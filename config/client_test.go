@@ -306,6 +306,31 @@ port = 2222
 	}
 }
 
+func TestLoadClientConfigMigration(t *testing.T) {
+	// Create temp file with old format
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	oldData := `
+[hosts.myhost]
+user = "testuser"
+address = "192.168.1.1"
+`
+	if err := os.WriteFile(path, []byte(oldData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadClientConfig(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if len(cfg.Hosts) != 1 {
+		t.Fatalf("expected 1 host, got %d", len(cfg.Hosts))
+	}
+	if cfg.Hosts[0].Name != "myhost" {
+		t.Errorf("expected myhost, got %s", cfg.Hosts[0].Name)
+	}
+}
+
 func TestParseArrayFormat(t *testing.T) {
 	data := `
 [[hosts]]
