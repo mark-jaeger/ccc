@@ -20,16 +20,6 @@ type Runner interface {
 	RunInteractive(cmd string) error
 }
 
-// findProject returns the project with the given name, or (zero, false) if not found.
-func findProject(projects *config.ProjectsConfig, name string) (config.Project, bool) {
-	for _, p := range projects.Projects {
-		if p.Name == name {
-			return p, true
-		}
-	}
-	return config.Project{}, false
-}
-
 // removeProject removes the project with the given name from the config in-place.
 func removeProject(projects *config.ProjectsConfig, name string) {
 	for i, p := range projects.Projects {
@@ -116,7 +106,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 			}
 		case ui.ActionSelect:
 			projectKey := result.Selected.Key
-			p, ok := findProject(projects, projectKey)
+			p, ok := projects.ProjectByName(projectKey)
 			if !ok {
 				continue
 			}
@@ -274,7 +264,7 @@ func deleteProject(in io.Reader, out io.Writer, projects *config.ProjectsConfig,
 	}
 
 	// Store for potential rollback
-	oldProject, found := findProject(projects, item.Key)
+	oldProject, found := projects.ProjectByName(item.Key)
 	removeProject(projects, item.Key)
 
 	if onSave != nil {

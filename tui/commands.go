@@ -78,10 +78,7 @@ func loadProjectsCmd(runner Runner) tea.Cmd {
 
 		projects, err := config.ParseProjectsConfig([]byte(output))
 		if err != nil {
-			// Return empty projects if parse fails
-			return projectsLoadedMsg{projects: &config.ProjectsConfig{
-				Projects: []config.Project{},
-			}}
+			return errMsg{fmt.Errorf("failed to parse projects.toml: %w", err)}
 		}
 		return projectsLoadedMsg{projects: projects}
 	}
@@ -339,6 +336,6 @@ func checkZmxLocalCmd() tea.Cmd {
 		if err := cmd.Run(); err != nil {
 			return errMsg{fmt.Errorf(zmxInstallMsg)}
 		}
-		return nil // zmx is available
+		return zmxAvailableMsg{}
 	}
 }
