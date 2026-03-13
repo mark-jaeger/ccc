@@ -256,6 +256,28 @@ func TestLoadClientConfigInvalidTOML(t *testing.T) {
 	}
 }
 
+func TestHostByName(t *testing.T) {
+	cfg := &ClientConfig{
+		Hosts: []Host{
+			{Name: "server1", User: "deploy", Address: "10.0.0.1"},
+			{Name: "server2", User: "admin", Address: "10.0.0.2"},
+		},
+	}
+
+	host, found := cfg.HostByName("server2")
+	if !found {
+		t.Fatal("expected to find server2")
+	}
+	if host.User != "admin" {
+		t.Errorf("expected admin, got %s", host.User)
+	}
+
+	_, found = cfg.HostByName("nonexistent")
+	if found {
+		t.Error("expected not found for nonexistent")
+	}
+}
+
 func TestParseArrayFormat(t *testing.T) {
 	data := `
 [[hosts]]
