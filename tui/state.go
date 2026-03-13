@@ -9,6 +9,7 @@ const (
 	StateHostSelect
 	StateProjectSelect
 	StateSessionSelect
+	StateSessionNameInput
 	StateCreatingSession
 	StateConnecting
 	StateError
@@ -26,6 +27,8 @@ func (s State) String() string {
 		return "ProjectSelect"
 	case StateSessionSelect:
 		return "SessionSelect"
+	case StateSessionNameInput:
+		return "SessionNameInput"
 	case StateCreatingSession:
 		return "CreatingSession"
 	case StateConnecting:
