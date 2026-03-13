@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mark-jaeger/ccc/config"
@@ -36,6 +38,9 @@ type Model struct {
 	// Keys
 	keys keyMap
 
+	// Session name input
+	sessionNameInput textinput.Model
+
 	// Mode (remote vs local)
 	isLocal bool
 
@@ -60,11 +65,17 @@ func New(isLocal bool) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 
+	ti := textinput.New()
+	ti.Placeholder = "main"
+	ti.CharLimit = 50
+	ti.Width = 30
+
 	return Model{
-		state:   StateLoading,
-		spinner: s,
-		keys:    Keys(),
-		isLocal: isLocal,
+		state:            StateLoading,
+		spinner:          s,
+		sessionNameInput: ti,
+		keys:             Keys(),
+		isLocal:          isLocal,
 	}
 }
 
@@ -251,6 +262,8 @@ func (m Model) updateState(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateProjectSelect(msg)
 	case StateSessionSelect:
 		return m.updateSessionSelect(msg)
+	case StateSessionNameInput:
+		return m.updateSessionNameInput(msg)
 	default:
 		return m, nil
 	}
@@ -328,10 +341,11 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, attachSessionCmd(*m.currentHost, session.Name)
 			}
 		case key.Matches(keyMsg, m.keys.New):
-			if m.isLocal {
-				return m, createSessionLocalCmd(m.currentProjectKey, m.currentProjectPath, m.sessions)
-			}
-			return m, createSessionCmd(*m.currentHost, m.currentProjectKey, m.currentProjectPath, m.sessions)
+			// Transition to name input instead of creating directly
+			m.sessionNameInput.Reset()
+			m.sessionNameInput.Focus()
+			m.state = StateSessionNameInput
+			return m, textinput.Blink
 		case key.Matches(keyMsg, m.keys.Kill):
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
@@ -343,6 +357,57 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	return m, cmd
+}
+
+// updateSessionNameInput handles updates when in session name input state.
+func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEnter:
+			suffix := strings.TrimSpace(m.sessionNameInput.Value())
+
+			// Validate suffix
+			if strings.Contains(suffix, ".") {
+				return m, nil
+			}
+			if strings.ContainsAny(suffix, " \t\n\r") {
+				return m, nil
+			}
+
+			// Build session name
+			var name string
+			if suffix == "" {
+				name = zmx.NextAutoName(m.currentProjectKey, m.sessions)
+			} else {
+				name = "ccc." + m.currentProjectKey + "." + suffix
+			}
+
+			// Check for conflicts
+			for _, s := range m.sessions {
+				if s.Name == name {
+					return m, nil
+				}
+			}
+
+			// Create the session
+			m.state = StateCreatingSession
+			if m.isLocal {
+				return m, createSessionWithNameLocalCmd(name, m.currentProjectPath)
+			}
+			return m, createSessionWithNameCmd(*m.currentHost, name, m.currentProjectPath)
+
+		case tea.KeyEsc:
+			m.sessionNameInput.Blur()
+			m.state = StateSessionSelect
+			return m, nil
+		}
+	}
+
+	m.sessionNameInput, cmd = m.sessionNameInput.Update(msg)
 	return m, cmd
 }
 
@@ -407,6 +472,8 @@ func (m Model) View() string {
 		return pad + m.breadcrumb() + "\n" + m.projectList.View()
 	case StateSessionSelect:
 		return pad + m.breadcrumb() + "\n" + m.sessionList.View()
+	case StateSessionNameInput:
+		return pad + m.sessionNameInputView()
 	case StateConnecting:
 		return pad + m.spinner.View() + " Connecting..."
 	case StateError:
@@ -415,6 +482,17 @@ func (m Model) View() string {
 		return m.helpView()
 	}
 	return ""
+}
+
+// sessionNameInputView renders the session name input screen.
+func (m Model) sessionNameInputView() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Creating session for: %s\n\n", m.currentProjectKey))
+	b.WriteString("Session suffix (empty for auto): ")
+	b.WriteString(m.sessionNameInput.View())
+	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("[Enter] Create  [Esc] Cancel"))
+	return b.String()
 }
 
 // breadcrumb returns the navigation breadcrumb.
