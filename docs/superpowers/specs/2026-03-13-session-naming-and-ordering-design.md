@@ -18,12 +18,14 @@ Two enhancements to ccc:
 
 ### New State
 
-Add `StateSessionNameInput` to the TUI state machine.
+Add `StateSessionNameInput` to the TUI state machine. This works alongside existing `StateCreatingSession`:
 
 ```
-SessionSelect → press 'n' → SessionNameInput → Enter → create & attach
+SessionSelect → press 'n' → SessionNameInput → Enter → StateCreatingSession → attach
                                              → Esc   → SessionSelect
 ```
+
+Note: `StateCreatingSession` already exists and handles the "creating..." spinner. `SessionNameInput` is the new input prompt that precedes it.
 
 ### UI
 
@@ -40,15 +42,19 @@ Session suffix (empty for auto): █
 | File | Changes |
 |------|---------|
 | `tui/state.go` | Add `StateSessionNameInput` constant |
-| `tui/model.go` | Add `sessionNameInput textinput.Model` field |
+| `tui/model.go` | Add `sessionNameInput textinput.Model` field (import `github.com/charmbracelet/bubbles/textinput`) |
 | `tui/model.go` | In `updateSessionSelect`, `n` key transitions to input state |
 | `tui/model.go` | Add `updateSessionNameInput` handler |
-| `tui/commands.go` | `createSessionCmd` takes explicit name; uses `NextAutoName` if empty |
+| `tui/commands.go` | `createSessionCmd` takes explicit name parameter; TUI layer calls `zmx.NextAutoName` when input is empty, then passes result to command |
+
+Note: `zmx/zmx.go` is unchanged. The conditional `NextAutoName` call happens in TUI before dispatching the command.
 
 ### Validation
 
 - If suffix conflicts with existing session, show error and stay in input state
 - Suffix must not contain `.` (would break `ccc.{project}.{suffix}` parsing)
+- Suffix must not contain whitespace (spaces, tabs, newlines)
+- Suffix is trimmed before validation
 
 ## Feature 2: Host/Project Ordering
 
@@ -120,7 +126,7 @@ type ClientConfig struct {
 }
 
 // Remove SortedHostNames() - slice order IS the order
-// Add HostByName(name string) *Host helper
+// Add HostByName(name string) (Host, bool) helper - returns value + found flag, consistent with existing patterns
 ```
 
 ```go
@@ -157,20 +163,25 @@ type ProjectsConfig struct {
 | `tui/keys.go` | Add `MoveUp`, `MoveDown` bindings |
 | `tui/model.go` | Handle Ctrl+arrow in `updateHostSelect`, `updateProjectSelect` |
 | `tui/model.go` | Add `reorderHosts()`, `reorderProjects()` helpers |
-| `tui/hostlist.go` | Accept `[]Host` instead of map, update help |
-| `tui/projectlist.go` | Accept `[]Project` instead of map, update help |
+| `tui/hostlist.go` | Change `NewHostList(hosts map[string]Host, names []string, ...)` to `NewHostList(hosts []Host, ...)` — name now embedded in struct |
+| `tui/projectlist.go` | Change `NewProjectList(projects map[string]Project, keys []string, ...)` to `NewProjectList(projects []Project, ...)` — name now embedded |
 | `tui/commands.go` | Update save commands for new format |
+
+### Save Behavior
+
+- **Hosts**: Always saved to local `~/.ccc/config.toml` (even in remote mode, hosts are client-side)
+- **Projects**: Saved to local `~/.ccc/projects.toml` in local mode, or via SSH to remote `~/.ccc/projects.toml` in remote mode
 
 ### Helper Functions
 
 ```go
-// Swap items in a slice
+// Swap items in a slice (generic or duplicated per type)
 func moveUp(slice []T, index int) []T
 func moveDown(slice []T, index int) []T
 
-// Find by name
-func (c *ClientConfig) HostByName(name string) *Host
-func (c *ProjectsConfig) ProjectByName(name string) *Project
+// Find by name - returns value + found flag (not pointer, consistent with existing patterns)
+func (c *ClientConfig) HostByName(name string) (Host, bool)
+func (c *ProjectsConfig) ProjectByName(name string) (Project, bool)
 ```
 
 ## Files Summary
