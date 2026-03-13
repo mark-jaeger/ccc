@@ -173,41 +173,6 @@ func attachSessionLocalCmd(sessionName string) tea.Cmd {
 	})
 }
 
-// createSessionCmd creates and attaches to a new zmx session (remote mode).
-// Uses tea.ExecProcess since zmx attach is interactive.
-func createSessionCmd(host config.Host, projectKey, projectPath string, existing []zmx.Session) tea.Cmd {
-	name := zmx.NextAutoName(projectKey, existing)
-
-	// Build SSH command with zmx create (cd + attach)
-	args := []string{"-t", host.Address}
-	if host.User != "" {
-		args = []string{"-t", host.User + "@" + host.Address}
-	}
-	if host.Port != 0 {
-		args = append([]string{"-p", fmt.Sprintf("%d", host.Port)}, args...)
-	}
-	args = append(args, zmx.BuildCreateCommand(name, projectPath))
-
-	cmd := exec.Command("ssh", args...)
-	cmd.Env = os.Environ()
-
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return sessionExitedMsg{err: err}
-	})
-}
-
-// createSessionLocalCmd creates and attaches to a session in local mode.
-func createSessionLocalCmd(projectKey, projectPath string, existing []zmx.Session) tea.Cmd {
-	name := zmx.NextAutoName(projectKey, existing)
-
-	cmd := exec.Command("sh", "-c", zmx.BuildCreateCommand(name, projectPath))
-	cmd.Env = os.Environ()
-
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return sessionExitedMsg{err: err}
-	})
-}
-
 // createSessionWithNameCmd creates and attaches to a session with explicit name.
 func createSessionWithNameCmd(host config.Host, name, projectPath string) tea.Cmd {
 	args := []string{"-t", host.Address}

@@ -608,9 +608,11 @@ Navigation:
   q         Quit
 
 Host Screen:
+  ctrl+↑/↓  Reorder hosts
   Enter     Connect to host
 
 Project Screen:
+  ctrl+↑/↓  Reorder projects
   s         Scan for new projects
   d         Delete project
   Enter     View sessions
