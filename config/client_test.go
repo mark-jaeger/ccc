@@ -11,7 +11,9 @@ func TestLoadClientConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 
-	data := `[hosts.prod]
+	data := `
+[[hosts]]
+name = "prod"
 user = "deploy"
 address = "10.0.0.1"
 port = 2222
@@ -19,7 +21,8 @@ identity_file = "/home/deploy/.ssh/id_ed25519"
 proxy_jump = "bastion"
 ssh_options = ["-o", "StrictHostKeyChecking=no"]
 
-[hosts.staging]
+[[hosts]]
+name = "staging"
 user = "admin"
 address = "10.0.0.2"
 `
@@ -37,7 +40,7 @@ address = "10.0.0.2"
 		t.Fatalf("expected 2 hosts, got %d", len(cfg.Hosts))
 	}
 
-	prod, ok := cfg.Hosts["prod"]
+	prod, ok := cfg.HostByName("prod")
 	if !ok {
 		t.Fatal("missing host 'prod'")
 	}
@@ -60,7 +63,7 @@ address = "10.0.0.2"
 		t.Errorf("prod.SSHOptions = %v, want [-o StrictHostKeyChecking=no]", prod.SSHOptions)
 	}
 
-	staging, ok := cfg.Hosts["staging"]
+	staging, ok := cfg.HostByName("staging")
 	if !ok {
 		t.Fatal("missing host 'staging'")
 	}
@@ -91,8 +94,9 @@ func TestSaveClientConfig(t *testing.T) {
 	path := filepath.Join(dir, "sub", "dir", "config.toml")
 
 	cfg := &ClientConfig{
-		Hosts: map[string]Host{
-			"web": {
+		Hosts: []Host{
+			{
+				Name:    "web",
 				User:    "www",
 				Address: "192.168.1.10",
 				Port:    22,
@@ -121,7 +125,7 @@ func TestSaveClientConfig(t *testing.T) {
 	if len(loaded.Hosts) != 1 {
 		t.Fatalf("expected 1 host after round-trip, got %d", len(loaded.Hosts))
 	}
-	web, ok := loaded.Hosts["web"]
+	web, ok := loaded.HostByName("web")
 	if !ok {
 		t.Fatal("missing host 'web' after round-trip")
 	}
@@ -146,7 +150,7 @@ func TestAddHost(t *testing.T) {
 	if len(cfg.Hosts) != 1 {
 		t.Fatalf("expected 1 host, got %d", len(cfg.Hosts))
 	}
-	h, ok := cfg.Hosts["new-server"]
+	h, ok := cfg.HostByName("new-server")
 	if !ok {
 		t.Fatal("missing host 'new-server'")
 	}
@@ -160,9 +164,9 @@ func TestAddHost(t *testing.T) {
 
 func TestRemoveHost(t *testing.T) {
 	cfg := &ClientConfig{
-		Hosts: map[string]Host{
-			"alpha": {User: "a", Address: "1.1.1.1"},
-			"beta":  {User: "b", Address: "2.2.2.2"},
+		Hosts: []Host{
+			{Name: "alpha", User: "a", Address: "1.1.1.1"},
+			{Name: "beta", User: "b", Address: "2.2.2.2"},
 		},
 	}
 
@@ -171,20 +175,20 @@ func TestRemoveHost(t *testing.T) {
 	if len(cfg.Hosts) != 1 {
 		t.Fatalf("expected 1 host after removal, got %d", len(cfg.Hosts))
 	}
-	if _, ok := cfg.Hosts["alpha"]; ok {
+	if _, ok := cfg.HostByName("alpha"); ok {
 		t.Error("host 'alpha' should have been removed")
 	}
-	if _, ok := cfg.Hosts["beta"]; !ok {
+	if _, ok := cfg.HostByName("beta"); !ok {
 		t.Error("host 'beta' should still exist")
 	}
 }
 
 func TestSortedHostNames(t *testing.T) {
 	cfg := &ClientConfig{
-		Hosts: map[string]Host{
-			"charlie": {},
-			"alpha":   {},
-			"bravo":   {},
+		Hosts: []Host{
+			{Name: "charlie"},
+			{Name: "alpha"},
+			{Name: "bravo"},
 		},
 	}
 
@@ -249,5 +253,33 @@ func TestLoadClientConfigInvalidTOML(t *testing.T) {
 	}
 	if errors.Is(err, ErrNoConfig) {
 		t.Fatal("should not be ErrNoConfig for invalid TOML")
+	}
+}
+
+func TestParseArrayFormat(t *testing.T) {
+	data := `
+[[hosts]]
+name = "server1"
+user = "deploy"
+address = "10.0.0.1"
+
+[[hosts]]
+name = "server2"
+user = "admin"
+address = "10.0.0.2"
+port = 2222
+`
+	cfg, err := ParseClientConfigData([]byte(data))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(cfg.Hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(cfg.Hosts))
+	}
+	if cfg.Hosts[0].Name != "server1" {
+		t.Errorf("expected server1, got %s", cfg.Hosts[0].Name)
+	}
+	if cfg.Hosts[1].Port != 2222 {
+		t.Errorf("expected port 2222, got %d", cfg.Hosts[1].Port)
 	}
 }
