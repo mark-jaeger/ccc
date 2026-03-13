@@ -104,12 +104,12 @@ func selectProjects(in io.Reader, out io.Writer, results []scan.ScanResult) (*co
 		return nil, err
 	}
 
-	projects := &config.ProjectsConfig{Projects: map[string]config.Project{}}
+	projects := &config.ProjectsConfig{Projects: []config.Project{}}
 
 	if answer == "a" || answer == "A" {
 		for _, r := range results {
 			key := scan.DeriveProjectKey(r.Path)
-			projects.Projects[key] = config.Project{Path: r.Path}
+			projects.Projects = append(projects.Projects, config.Project{Name: key, Path: r.Path})
 		}
 	} else {
 		for _, part := range strings.Split(answer, ",") {
@@ -117,7 +117,7 @@ func selectProjects(in io.Reader, out io.Writer, results []scan.ScanResult) (*co
 			if err == nil && idx >= 1 && idx <= len(results) {
 				r := results[idx-1]
 				key := scan.DeriveProjectKey(r.Path)
-				projects.Projects[key] = config.Project{Path: r.Path}
+				projects.Projects = append(projects.Projects, config.Project{Name: key, Path: r.Path})
 			}
 		}
 	}

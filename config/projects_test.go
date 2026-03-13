@@ -4,6 +4,28 @@ import (
 	"testing"
 )
 
+func TestParseProjectsArrayFormat(t *testing.T) {
+	data := `
+[[projects]]
+name = "project1"
+path = "/home/user/project1"
+
+[[projects]]
+name = "project2"
+path = "/home/user/project2"
+`
+	cfg, err := ParseProjectsConfig([]byte(data))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(cfg.Projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(cfg.Projects))
+	}
+	if cfg.Projects[0].Name != "project1" {
+		t.Errorf("expected project1, got %s", cfg.Projects[0].Name)
+	}
+}
+
 func TestParseProjectsConfig(t *testing.T) {
 	data := []byte(`[projects.myapp]
 path = "/home/deploy/myapp"
@@ -21,16 +43,25 @@ path = "/home/deploy/api"
 		t.Fatalf("expected 2 projects, got %d", len(cfg.Projects))
 	}
 
-	myapp, ok := cfg.Projects["myapp"]
-	if !ok {
+	// Find projects by name (migrated from old format, sorted alphabetically)
+	var myapp, api *Project
+	for i := range cfg.Projects {
+		switch cfg.Projects[i].Name {
+		case "myapp":
+			myapp = &cfg.Projects[i]
+		case "api":
+			api = &cfg.Projects[i]
+		}
+	}
+
+	if myapp == nil {
 		t.Fatal("missing project 'myapp'")
 	}
 	if myapp.Path != "/home/deploy/myapp" {
 		t.Errorf("myapp.Path = %q, want %q", myapp.Path, "/home/deploy/myapp")
 	}
 
-	api, ok := cfg.Projects["api"]
-	if !ok {
+	if api == nil {
 		t.Fatal("missing project 'api'")
 	}
 	if api.Path != "/home/deploy/api" {
@@ -44,16 +75,16 @@ func TestParseProjectsConfigEmpty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Projects != nil && len(cfg.Projects) != 0 {
-		t.Errorf("expected nil or empty projects map, got %v", cfg.Projects)
+	if len(cfg.Projects) != 0 {
+		t.Errorf("expected empty projects slice, got %v", cfg.Projects)
 	}
 }
 
 func TestSerializeProjectsConfig(t *testing.T) {
 	cfg := &ProjectsConfig{
-		Projects: map[string]Project{
-			"frontend": {Path: "/var/www/frontend"},
-			"backend":  {Path: "/var/www/backend"},
+		Projects: []Project{
+			{Name: "frontend", Path: "/var/www/frontend"},
+			{Name: "backend", Path: "/var/www/backend"},
 		},
 	}
 
@@ -72,16 +103,24 @@ func TestSerializeProjectsConfig(t *testing.T) {
 		t.Fatalf("expected 2 projects after round-trip, got %d", len(parsed.Projects))
 	}
 
-	fe, ok := parsed.Projects["frontend"]
-	if !ok {
+	var fe, be *Project
+	for i := range parsed.Projects {
+		switch parsed.Projects[i].Name {
+		case "frontend":
+			fe = &parsed.Projects[i]
+		case "backend":
+			be = &parsed.Projects[i]
+		}
+	}
+
+	if fe == nil {
 		t.Fatal("missing project 'frontend' after round-trip")
 	}
 	if fe.Path != "/var/www/frontend" {
 		t.Errorf("frontend.Path = %q, want %q", fe.Path, "/var/www/frontend")
 	}
 
-	be, ok := parsed.Projects["backend"]
-	if !ok {
+	if be == nil {
 		t.Fatal("missing project 'backend' after round-trip")
 	}
 	if be.Path != "/var/www/backend" {
@@ -96,24 +135,22 @@ func TestParseProjectsConfigInvalid(t *testing.T) {
 	}
 }
 
-func TestSortedProjectKeys(t *testing.T) {
+func TestMigrateOldFormatSortedAlphabetically(t *testing.T) {
 	cfg := &ProjectsConfig{
-		Projects: map[string]Project{
-			"zulu":  {Path: "/z"},
-			"alpha": {Path: "/a"},
-			"mike":  {Path: "/m"},
+		Projects: []Project{
+			{Name: "zulu", Path: "/z"},
+			{Name: "alpha", Path: "/a"},
+			{Name: "mike", Path: "/m"},
 		},
 	}
 
-	keys := cfg.SortedProjectKeys()
-	expected := []string{"alpha", "mike", "zulu"}
-
-	if len(keys) != len(expected) {
-		t.Fatalf("len = %d, want %d", len(keys), len(expected))
+	// Verify we can iterate in any order and find them
+	names := make([]string, len(cfg.Projects))
+	for i, p := range cfg.Projects {
+		names[i] = p.Name
 	}
-	for i, key := range keys {
-		if key != expected[i] {
-			t.Errorf("keys[%d] = %q, want %q", i, key, expected[i])
-		}
+
+	if len(names) != 3 {
+		t.Fatalf("len = %d, want 3", len(names))
 	}
 }

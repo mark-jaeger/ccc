@@ -62,8 +62,8 @@ func TestProjectFlowSelectProject(t *testing.T) {
 	runner.responses["zmx list"] = ""
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -85,8 +85,8 @@ func TestProjectFlowSelectProject(t *testing.T) {
 func TestProjectFlowQuit(t *testing.T) {
 	runner := newMockRunner()
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -102,8 +102,8 @@ func TestProjectFlowQuit(t *testing.T) {
 func TestProjectFlowBack(t *testing.T) {
 	runner := newMockRunner()
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestProjectFlowBack(t *testing.T) {
 func TestProjectFlowNoProjects(t *testing.T) {
 	runner := newMockRunner()
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{},
+		Projects: []config.Project{},
 	}
 
 	in := strings.NewReader("")
@@ -138,8 +138,8 @@ func TestProjectFlowNoProjects(t *testing.T) {
 func TestProjectFlowScanNotAvailable(t *testing.T) {
 	runner := newMockRunner()
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -336,8 +336,8 @@ func TestProjectFlowPathNotFoundShowsMessage(t *testing.T) {
 	runner.errors["test -d"] = fmt.Errorf("exit 1")
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -366,8 +366,8 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 	runner.errors["test -d"] = fmt.Errorf("exit 1")
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -381,7 +381,8 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 	}
 
 	// Project should still exist since confirmation wasn't provided
-	if _, exists := projects.Projects["myapp"]; !exists {
+	_, exists := findProject(projects, "myapp")
+	if !exists {
 		t.Error("expected project to still exist when confirmation not provided")
 	}
 }
@@ -391,9 +392,9 @@ func TestDeleteProjectConfirmed(t *testing.T) {
 	var savedConfig *config.ProjectsConfig
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
-			"other": {Path: "/home/user/other"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
+			{Name: "other", Path: "/home/user/other"},
 		},
 	}
 
@@ -427,15 +428,16 @@ func TestDeleteProjectConfirmed(t *testing.T) {
 		t.Errorf("expected 1 project remaining, got %d", len(savedConfig.Projects))
 	}
 
-	if _, exists := savedConfig.Projects["myapp"]; exists {
+	_, exists := findProject(savedConfig, "myapp")
+	if exists {
 		t.Error("expected myapp to be deleted")
 	}
 }
 
 func TestDeleteProjectDeclined(t *testing.T) {
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -451,7 +453,8 @@ func TestDeleteProjectDeclined(t *testing.T) {
 	}
 
 	// Project should still exist
-	if _, exists := projects.Projects["myapp"]; !exists {
+	_, exists := findProject(projects, "myapp")
+	if !exists {
 		t.Error("expected project to still exist after declining delete")
 	}
 
@@ -464,8 +467,8 @@ func TestDeleteProjectDeclined(t *testing.T) {
 
 func TestDeleteProjectNoOnSave(t *testing.T) {
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -480,8 +483,9 @@ func TestDeleteProjectNoOnSave(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Project should be deleted from map
-	if _, exists := projects.Projects["myapp"]; exists {
+	// Project should be deleted from slice
+	_, exists := findProject(projects, "myapp")
+	if exists {
 		t.Error("expected project to be deleted")
 	}
 
@@ -493,8 +497,8 @@ func TestDeleteProjectNoOnSave(t *testing.T) {
 
 func TestDeleteProjectSaveError(t *testing.T) {
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/home/user/myapp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/home/user/myapp"},
 		},
 	}
 
@@ -517,7 +521,8 @@ func TestDeleteProjectSaveError(t *testing.T) {
 	}
 
 	// Project should be rolled back (still exists)
-	if _, exists := projects.Projects["myapp"]; !exists {
+	_, exists := findProject(projects, "myapp")
+	if !exists {
 		t.Error("expected project to be rolled back after save failure")
 	}
 

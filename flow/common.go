@@ -20,6 +20,26 @@ type Runner interface {
 	RunInteractive(cmd string) error
 }
 
+// findProject returns the project with the given name, or (zero, false) if not found.
+func findProject(projects *config.ProjectsConfig, name string) (config.Project, bool) {
+	for _, p := range projects.Projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return config.Project{}, false
+}
+
+// removeProject removes the project with the given name from the config in-place.
+func removeProject(projects *config.ProjectsConfig, name string) {
+	for i, p := range projects.Projects {
+		if p.Name == name {
+			projects.Projects = append(projects.Projects[:i], projects.Projects[i+1:]...)
+			return
+		}
+	}
+}
+
 // Deprecated: ProjectFlow is replaced by the TUI package.
 // Kept for backwards compatibility and testing.
 //
@@ -29,16 +49,14 @@ type Runner interface {
 // the caller to persist the updated config. If nil, removals are in-memory only.
 func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.ProjectsConfig, onScan func(io.Reader, io.Writer) (*config.ProjectsConfig, error), onSave func(*config.ProjectsConfig) error) error {
 	for {
-		keys := projects.SortedProjectKeys()
-		if len(keys) == 0 {
+		if len(projects.Projects) == 0 {
 			fmt.Fprintf(out, "\n  No projects configured.\n")
 			return nil
 		}
 
-		items := make([]ui.MenuItem, len(keys))
-		for i, k := range keys {
-			p := projects.Projects[k]
-			items[i] = ui.MenuItem{Key: k, Label: k, Extra: p.Path}
+		items := make([]ui.MenuItem, len(projects.Projects))
+		for i, p := range projects.Projects {
+			items[i] = ui.MenuItem{Key: p.Name, Label: p.Name, Extra: p.Path}
 		}
 
 		result, err := ui.ShowMenu(in, out, ui.MenuConfig{
@@ -69,8 +87,19 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 					return err
 				}
 				if newProjects != nil {
-					for k, p := range newProjects.Projects {
-						projects.Projects[k] = p
+					for _, p := range newProjects.Projects {
+						// Add or update project by name
+						found := false
+						for i, existing := range projects.Projects {
+							if existing.Name == p.Name {
+								projects.Projects[i] = p
+								found = true
+								break
+							}
+						}
+						if !found {
+							projects.Projects = append(projects.Projects, p)
+						}
 					}
 					if onSave != nil {
 						if saveErr := onSave(projects); saveErr != nil {
@@ -87,7 +116,11 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 			}
 		case ui.ActionSelect:
 			projectKey := result.Selected.Key
-			projectPath := projects.Projects[projectKey].Path
+			p, ok := findProject(projects, projectKey)
+			if !ok {
+				continue
+			}
+			projectPath := p.Path
 
 			// Validate project path exists
 			checkCmd := fmt.Sprintf("test -d %s", shellutil.Quote(projectPath))
@@ -98,7 +131,7 @@ func ProjectFlow(in io.Reader, out io.Writer, runner Runner, projects *config.Pr
 					return confirmErr
 				}
 				if answer {
-					delete(projects.Projects, projectKey)
+					removeProject(projects, projectKey)
 					fmt.Fprintf(out, "  Removed %s.\n", projectKey)
 					if onSave != nil {
 						if saveErr := onSave(projects); saveErr != nil {
@@ -241,13 +274,15 @@ func deleteProject(in io.Reader, out io.Writer, projects *config.ProjectsConfig,
 	}
 
 	// Store for potential rollback
-	oldProject := projects.Projects[item.Key]
-	delete(projects.Projects, item.Key)
+	oldProject, found := findProject(projects, item.Key)
+	removeProject(projects, item.Key)
 
 	if onSave != nil {
 		if saveErr := onSave(projects); saveErr != nil {
 			// Rollback the in-memory deletion
-			projects.Projects[item.Key] = oldProject
+			if found {
+				projects.Projects = append(projects.Projects, oldProject)
+			}
 			return fmt.Errorf("failed to delete project: %w", saveErr)
 		}
 	}

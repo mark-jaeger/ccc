@@ -62,7 +62,7 @@ func loadProjectsCmd(runner Runner) tea.Cmd {
 		if output == "" {
 			// Return empty projects if file doesn't exist
 			return projectsLoadedMsg{projects: &config.ProjectsConfig{
-				Projects: make(map[string]config.Project),
+				Projects: []config.Project{},
 			}}
 		}
 
@@ -70,7 +70,7 @@ func loadProjectsCmd(runner Runner) tea.Cmd {
 		if err != nil {
 			// Return empty projects if parse fails
 			return projectsLoadedMsg{projects: &config.ProjectsConfig{
-				Projects: make(map[string]config.Project),
+				Projects: []config.Project{},
 			}}
 		}
 		return projectsLoadedMsg{projects: projects}
@@ -89,7 +89,7 @@ func loadProjectsLocalCmd() tea.Cmd {
 		if err != nil {
 			// Return empty projects if file doesn't exist
 			return projectsLoadedMsg{projects: &config.ProjectsConfig{
-				Projects: make(map[string]config.Project),
+				Projects: []config.Project{},
 			}}
 		}
 		projects, err := config.ParseProjectsConfig(data)
