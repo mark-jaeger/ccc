@@ -1475,6 +1475,55 @@ git commit -m "fix(tui): scanCompleteMsg uses slice-based projects"
 
 ---
 
+### Task 5.4: Update projectDeletedMsg handler for slice-based projects
+
+**Files:**
+- Modify: `tui/model.go`
+
+- [ ] **Step 1: Update projectDeletedMsg handler**
+
+The current handler uses `delete()` on a map:
+```go
+delete(m.projects.Projects, msg.key)
+```
+
+Update to filter from slice:
+```go
+// In tui/model.go - update projectDeletedMsg handler
+
+case projectDeletedMsg:
+	if m.projects != nil {
+		// Filter out the deleted project
+		filtered := make([]config.Project, 0, len(m.projects.Projects))
+		for _, p := range m.projects.Projects {
+			if p.Name != msg.key {
+				filtered = append(filtered, p)
+			}
+		}
+		m.projects.Projects = filtered
+
+		if m.isLocal {
+			return m, saveProjectsLocalCmd(m.projects)
+		}
+		return m, saveProjectsCmd(m.runner, m.projects)
+	}
+	return m, nil
+```
+
+- [ ] **Step 2: Run build to verify no errors**
+
+Run: `go build ./...`
+Expected: SUCCESS
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tui/model.go
+git commit -m "fix(tui): projectDeletedMsg uses slice-based projects"
+```
+
+---
+
 ## Chunk 6: Fix Remaining Compilation and Run Tests
 
 ### Task 6.1: Fix any remaining compilation errors
