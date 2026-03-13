@@ -7,10 +7,10 @@ import (
 )
 
 // NewHostList creates a list model for host selection.
-func NewHostList(hosts map[string]config.Host, names []string, width, height int) list.Model {
-	items := make([]list.Item, len(names))
-	for i, name := range names {
-		items[i] = NewHostItem(name, hosts[name])
+func NewHostList(hosts []config.Host, width, height int) list.Model {
+	items := make([]list.Item, len(hosts))
+	for i, h := range hosts {
+		items[i] = NewHostItem(h.Name, h)
 	}
 
 	l := list.New(items, newDelegate(), width, height)

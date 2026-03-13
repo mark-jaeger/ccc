@@ -146,7 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Message handlers for async operations
 	case hostsLoadedMsg:
 		m.hosts = msg.hosts
-		m.SetHosts(msg.hosts, msg.names)
+		m.SetHosts(msg.hosts)
 		return m, nil
 
 	case hostConnectedMsg:
@@ -275,6 +275,16 @@ func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.hostList, cmd = m.hostList.Update(msg)
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		// Don't allow reorder while filtering
+		if m.hostList.FilterState() != list.Filtering {
+			switch {
+			case key.Matches(keyMsg, m.keys.MoveUp):
+				return m.reorderHost(-1)
+			case key.Matches(keyMsg, m.keys.MoveDown):
+				return m.reorderHost(1)
+			}
+		}
+
 		if key.Matches(keyMsg, m.keys.Select) {
 			if item := m.hostList.SelectedItem(); item != nil {
 				hi := item.(HostItem)
@@ -287,12 +297,42 @@ func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// reorderHost moves the selected host up (-1) or down (+1).
+func (m Model) reorderHost(direction int) (tea.Model, tea.Cmd) {
+	idx := m.hostList.Index()
+	newIdx := idx + direction
+
+	if newIdx < 0 || newIdx >= len(m.hosts) {
+		return m, nil // at boundary, do nothing
+	}
+
+	// Swap in the slice
+	m.hosts[idx], m.hosts[newIdx] = m.hosts[newIdx], m.hosts[idx]
+
+	// Rebuild list and restore cursor
+	m.hostList = NewHostList(m.hosts, m.width, m.height-2)
+	m.hostList.Select(newIdx)
+
+	// Save config
+	return m, saveHostsCmd(m.hosts)
+}
+
 // updateProjectSelect handles updates when in project selection state.
 func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.projectList, cmd = m.projectList.Update(msg)
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		// Don't allow reorder while filtering
+		if m.projectList.FilterState() != list.Filtering {
+			switch {
+			case key.Matches(keyMsg, m.keys.MoveUp):
+				return m.reorderProject(-1)
+			case key.Matches(keyMsg, m.keys.MoveDown):
+				return m.reorderProject(1)
+			}
+		}
+
 		switch {
 		case key.Matches(keyMsg, m.keys.Select):
 			if item := m.projectList.SelectedItem(); item != nil {
@@ -323,6 +363,29 @@ func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+// reorderProject moves the selected project up (-1) or down (+1).
+func (m Model) reorderProject(direction int) (tea.Model, tea.Cmd) {
+	idx := m.projectList.Index()
+	newIdx := idx + direction
+
+	if newIdx < 0 || newIdx >= len(m.projects.Projects) {
+		return m, nil
+	}
+
+	// Swap
+	m.projects.Projects[idx], m.projects.Projects[newIdx] = m.projects.Projects[newIdx], m.projects.Projects[idx]
+
+	// Rebuild list
+	m.projectList = NewProjectList(m.projects.Projects, m.width, m.height-4)
+	m.projectList.Select(newIdx)
+
+	// Save
+	if m.isLocal {
+		return m, saveProjectsLocalCmd(m.projects)
+	}
+	return m, saveProjectsCmd(m.runner, m.projects)
 }
 
 // updateSessionSelect handles updates when in session selection state.
@@ -511,8 +574,8 @@ func (m Model) breadcrumb() string {
 }
 
 // SetHosts initializes the host list with data.
-func (m *Model) SetHosts(hosts []config.Host, names []string) {
-	m.hostList = NewHostList(hosts, names, m.width, m.height-2)
+func (m *Model) SetHosts(hosts []config.Host) {
+	m.hostList = NewHostList(hosts, m.width, m.height-2)
 	m.state = StateHostSelect
 }
 
