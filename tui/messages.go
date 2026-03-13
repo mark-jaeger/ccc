@@ -7,8 +7,7 @@ import (
 
 // hostsLoadedMsg is sent when hosts are loaded from config.
 type hostsLoadedMsg struct {
-	hosts map[string]config.Host
-	names []string // sorted host names
+	hosts []config.Host
 }
 
 // hostConnectedMsg is sent when SSH connection is established.

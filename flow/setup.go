@@ -21,7 +21,7 @@ func SetupFirstHost(in io.Reader, out io.Writer, cfgPath string) (*config.Client
 		return nil, err
 	}
 
-	cfg := &config.ClientConfig{Hosts: map[string]config.Host{}}
+	cfg := &config.ClientConfig{Hosts: []config.Host{}}
 	cfg.AddHost(name, host)
 
 	if err := config.SaveClientConfig(cfgPath, cfg); err != nil {

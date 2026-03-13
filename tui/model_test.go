@@ -34,8 +34,8 @@ func TestWindowSizeMsg(t *testing.T) {
 	// Initialize lists by setting hosts (simulates what happens when hostsLoadedMsg is received)
 	m.width = 80
 	m.height = 24
-	hosts := map[string]config.Host{"server1": {Address: "192.168.1.1"}}
-	m.SetHosts(hosts, []string{"server1"})
+	hosts := []config.Host{{Name: "server1", Address: "192.168.1.1"}}
+	m.SetHosts(hosts)
 
 	msg := tea.WindowSizeMsg{Width: 100, Height: 30}
 
@@ -87,13 +87,12 @@ func TestHostsLoadedMsg(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	hosts := map[string]config.Host{
-		"server1": {Address: "192.168.1.1"},
-		"server2": {Address: "192.168.1.2"},
+	hosts := []config.Host{
+		{Name: "server1", Address: "192.168.1.1"},
+		{Name: "server2", Address: "192.168.1.2"},
 	}
-	names := []string{"server1", "server2"}
 
-	newModel, _ := m.Update(hostsLoadedMsg{hosts: hosts, names: names})
+	newModel, _ := m.Update(hostsLoadedMsg{hosts: hosts})
 	m = newModel.(Model)
 
 	if m.state != StateHostSelect {
@@ -107,8 +106,8 @@ func TestProjectsLoadedMsg(t *testing.T) {
 	m.height = 24
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"proj1": {Path: "/home/user/proj1"},
+		Projects: []config.Project{
+			{Name: "proj1", Path: "/home/user/proj1"},
 		},
 	}
 

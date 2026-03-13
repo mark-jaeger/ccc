@@ -12,6 +12,21 @@ import (
 	"github.com/mark-jaeger/ccc/zmx"
 )
 
+// saveHostsCmd saves the host list to the local config file.
+func saveHostsCmd(hosts []config.Host) tea.Cmd {
+	return func() tea.Msg {
+		path, err := config.DefaultClientConfigPath()
+		if err != nil {
+			return errMsg{err}
+		}
+		cfg := &config.ClientConfig{Hosts: hosts}
+		if err := config.SaveClientConfig(path, cfg); err != nil {
+			return errMsg{err}
+		}
+		return nil // success, no message needed
+	}
+}
+
 // loadHostsCmd loads hosts from the local config file.
 func loadHostsCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -23,13 +38,8 @@ func loadHostsCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		names := make([]string, len(cfg.Hosts))
-		for i, h := range cfg.Hosts {
-			names[i] = h.Name
-		}
 		return hostsLoadedMsg{
 			hosts: cfg.Hosts,
-			names: names,
 		}
 	}
 }
