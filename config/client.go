@@ -17,6 +17,7 @@ var ErrNoConfig = errors.New("config file not found")
 
 // Host represents connection details for a remote host.
 type Host struct {
+	Name              string   `toml:"name"`
 	User              string   `toml:"user"`
 	Address           string   `toml:"address"`
 	Port              int      `toml:"port,omitempty"`
@@ -28,7 +29,7 @@ type Host struct {
 
 // ClientConfig holds the client-side configuration including known hosts.
 type ClientConfig struct {
-	Hosts map[string]Host `toml:"hosts"`
+	Hosts []Host `toml:"hosts"`
 }
 
 // DefaultClientConfigPath returns the default path for the client config file.
@@ -52,6 +53,18 @@ func (h Host) Validate() error {
 	return nil
 }
 
+// ParseClientConfigData parses TOML config data from a byte slice.
+func ParseClientConfigData(data []byte) (*ClientConfig, error) {
+	var cfg ClientConfig
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.Hosts == nil {
+		cfg.Hosts = []Host{}
+	}
+	return &cfg, nil
+}
+
 // LoadClientConfig reads and parses a TOML client config from the given path.
 // Returns ErrNoConfig if the file does not exist.
 func LoadClientConfig(path string) (*ClientConfig, error) {
@@ -62,15 +75,7 @@ func LoadClientConfig(path string) (*ClientConfig, error) {
 		}
 		return nil, err
 	}
-
-	var cfg ClientConfig
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-	if cfg.Hosts == nil {
-		cfg.Hosts = make(map[string]Host)
-	}
-	return &cfg, nil
+	return ParseClientConfigData(data)
 }
 
 // SaveClientConfig serializes the config to TOML and writes it to the given path.
@@ -90,24 +95,45 @@ func SaveClientConfig(path string, cfg *ClientConfig) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// AddHost adds or replaces a host entry in the config.
-func (c *ClientConfig) AddHost(name string, host Host) {
-	if c.Hosts == nil {
-		c.Hosts = make(map[string]Host)
+// HostByName returns the host with the given name and true, or zero value and
+// false if not found.
+func (c *ClientConfig) HostByName(name string) (Host, bool) {
+	for _, h := range c.Hosts {
+		if h.Name == name {
+			return h, true
+		}
 	}
-	c.Hosts[name] = host
+	return Host{}, false
 }
 
-// RemoveHost removes a host entry from the config.
+// AddHost adds or replaces a host entry in the config by name.
+func (c *ClientConfig) AddHost(name string, host Host) {
+	host.Name = name
+	for i, h := range c.Hosts {
+		if h.Name == name {
+			c.Hosts[i] = host
+			return
+		}
+	}
+	c.Hosts = append(c.Hosts, host)
+}
+
+// RemoveHost removes a host entry from the config by name.
 func (c *ClientConfig) RemoveHost(name string) {
-	delete(c.Hosts, name)
+	hosts := make([]Host, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		if h.Name != name {
+			hosts = append(hosts, h)
+		}
+	}
+	c.Hosts = hosts
 }
 
 // SortedHostNames returns the host names in alphabetical order.
 func (c *ClientConfig) SortedHostNames() []string {
 	names := make([]string, 0, len(c.Hosts))
-	for name := range c.Hosts {
-		names = append(names, name)
+	for _, h := range c.Hosts {
+		names = append(names, h.Name)
 	}
 	sort.Strings(names)
 	return names
