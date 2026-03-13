@@ -7,70 +7,70 @@ import (
 	"testing"
 )
 
-func TestCheckTmuxFound(t *testing.T) {
+func TestCheckZmxFound(t *testing.T) {
 	runner := newMockRunner()
-	runner.responses["command -v tmux"] = "/usr/bin/tmux"
+	runner.responses["command -v zmx"] = "/usr/bin/zmx"
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, runner)
+	err := CheckZmx(in, out, runner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestCheckTmuxNotFoundThenInstalled(t *testing.T) {
+func TestCheckZmxNotFoundThenInstalled(t *testing.T) {
 	runner := newMockRunner()
 
 	// First call fails, second succeeds (after shell)
 	callCount := 0
 	origRun := runner.Run
 	_ = origRun
-	// Override Run to track call count for "command -v tmux"
+	// Override Run to track call count for "command -v zmx"
 	runner.responses["uname -s"] = "Linux"
 
-	customRunner := &checkTmuxRunner{
+	customRunner := &checkZmxRunner{
 		mockRunner: runner,
-		tmuxCalls:  0,
+		zmxCalls:   0,
 	}
 
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, customRunner)
+	err := CheckZmx(in, out, customRunner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out.String(), "tmux found") {
-		t.Errorf("expected 'tmux found' after recheck, got: %s", out.String())
+	if !strings.Contains(out.String(), "zmx found") {
+		t.Errorf("expected 'zmx found' after recheck, got: %s", out.String())
 	}
 	_ = callCount
 }
 
-// checkTmuxRunner fails the first "command -v tmux" call and succeeds on the second.
-type checkTmuxRunner struct {
+// checkZmxRunner fails the first "command -v zmx" call and succeeds on the second.
+type checkZmxRunner struct {
 	*mockRunner
-	tmuxCalls int
+	zmxCalls int
 }
 
-func (r *checkTmuxRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v tmux") {
-		r.tmuxCalls++
-		if r.tmuxCalls == 1 {
+func (r *checkZmxRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v zmx") {
+		r.zmxCalls++
+		if r.zmxCalls == 1 {
 			return "", fmt.Errorf("not found")
 		}
-		return "/usr/bin/tmux", nil
+		return "/usr/bin/zmx", nil
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *checkTmuxRunner) RunInteractive(cmd string) error {
+func (r *checkZmxRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckTmuxNotFoundAfterRetry(t *testing.T) {
-	runner := &alwaysFailTmuxRunner{
+func TestCheckZmxNotFoundAfterRetry(t *testing.T) {
+	runner := &alwaysFailZmxRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Linux"
@@ -78,32 +78,32 @@ func TestCheckTmuxNotFoundAfterRetry(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	err := CheckTmux(in, out, runner)
+	err := CheckZmx(in, out, runner)
 	if err == nil {
-		t.Fatal("expected error when tmux is never found")
+		t.Fatal("expected error when zmx is never found")
 	}
-	if !strings.Contains(err.Error(), "tmux not installed") {
-		t.Errorf("expected 'tmux not installed' error, got: %v", err)
+	if !strings.Contains(err.Error(), "zmx not installed") {
+		t.Errorf("expected 'zmx not installed' error, got: %v", err)
 	}
 }
 
-type alwaysFailTmuxRunner struct {
+type alwaysFailZmxRunner struct {
 	*mockRunner
 }
 
-func (r *alwaysFailTmuxRunner) Run(cmd string) (string, error) {
-	if strings.Contains(cmd, "command -v tmux") {
+func (r *alwaysFailZmxRunner) Run(cmd string) (string, error) {
+	if strings.Contains(cmd, "command -v zmx") {
 		return "", fmt.Errorf("not found")
 	}
 	return r.mockRunner.Run(cmd)
 }
 
-func (r *alwaysFailTmuxRunner) RunInteractive(cmd string) error {
+func (r *alwaysFailZmxRunner) RunInteractive(cmd string) error {
 	return r.mockRunner.RunInteractive(cmd)
 }
 
-func TestCheckTmuxDarwinHint(t *testing.T) {
-	runner := &alwaysFailTmuxRunner{
+func TestCheckZmxDarwinHint(t *testing.T) {
+	runner := &alwaysFailZmxRunner{
 		mockRunner: newMockRunner(),
 	}
 	runner.mockRunner.responses["uname -s"] = "Darwin"
@@ -111,14 +111,14 @@ func TestCheckTmuxDarwinHint(t *testing.T) {
 	in := strings.NewReader("")
 	out := &bytes.Buffer{}
 
-	_ = CheckTmux(in, out, runner)
+	_ = CheckZmx(in, out, runner)
 
 	output := out.String()
-	if !strings.Contains(output, "brew install tmux") {
+	if !strings.Contains(output, "brew install zmx") {
 		t.Errorf("expected brew hint for Darwin, got: %s", output)
 	}
-	// On Darwin, should NOT show Ubuntu/Fedora hints
-	if strings.Contains(output, "apt install") {
-		t.Errorf("should not show apt hint on Darwin, got: %s", output)
+	// On Darwin, should NOT show Linux cargo hints
+	if strings.Contains(output, "cargo install") {
+		t.Errorf("should not show cargo hint on Darwin, got: %s", output)
 	}
 }

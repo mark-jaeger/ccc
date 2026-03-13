@@ -1,16 +1,27 @@
-// ccc is a CLI tool for managing tmux sessions on local and remote machines.
+// ccc is a CLI tool for managing zmx sessions on local and remote machines.
 package main
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/mark-jaeger/ccc/flow"
-	"github.com/mark-jaeger/ccc/tmux"
+	"github.com/mark-jaeger/ccc/tui"
 )
 
 // version is set at build time via ldflags; defaults to "dev" for local builds.
 var version = "dev"
+
+const zmxInstallMsg = `zmx not found
+
+Install zmx for your platform:
+
+  macOS:   brew install neurosnap/tap/zmx
+  Ubuntu:  cargo install zmx
+  Windows: cargo install zmx
+
+See https://github.com/neurosnap/zmx for details.`
 
 func main() {
 	args := os.Args[1:]
@@ -20,10 +31,6 @@ func main() {
 		return
 	}
 
-	if socket := os.Getenv("CCC_TMUX_SOCKET"); socket != "" {
-		tmux.SocketOverride = socket
-	}
-
 	isLocal := len(args) > 0 && args[0] == "local"
 	if isLocal {
 		args = args[1:]
@@ -31,18 +38,19 @@ func main() {
 
 	// Auto-detect: if running over SSH, use local mode
 	if !isLocal && flow.IsSSHSession() {
-		fmt.Println("\n  You're already on this machine via SSH.")
-		fmt.Println("  Switching to local mode (no SSH hop).")
 		isLocal = true
 	}
 
-	var err error
+	// Check for zmx before starting TUI (local mode only - remote checks happen after SSH)
 	if isLocal {
-		err = flow.RunLocalMode(os.Stdin, os.Stdout)
-	} else {
-		err = flow.RunRemoteMode(os.Stdin, os.Stdout, args)
+		if err := exec.Command("sh", "-c", "command -v zmx").Run(); err != nil {
+			fmt.Fprintln(os.Stderr, zmxInstallMsg)
+			os.Exit(1)
+		}
 	}
-	if err != nil {
+
+	// Run the TUI
+	if err := tui.Run(isLocal); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

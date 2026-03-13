@@ -11,6 +11,9 @@ import (
 	"github.com/mark-jaeger/ccc/ui"
 )
 
+// Deprecated: RunRemoteMode is replaced by tui.Run(false).
+// Kept for backwards compatibility.
+//
 // RunRemoteMode runs ccc in remote mode (SSH to host).
 func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
 	cfgPath, err := config.DefaultClientConfigPath()

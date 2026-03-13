@@ -32,6 +32,9 @@ func (r *LocalRunner) RunInteractive(cmd string) error {
 	return proc.Run()
 }
 
+// Deprecated: RunLocalMode is replaced by tui.Run(true).
+// Kept for backwards compatibility.
+//
 // RunLocalMode runs ccc in local mode (no SSH).
 func RunLocalMode(in io.Reader, out io.Writer) error {
 	home, err := os.UserHomeDir()

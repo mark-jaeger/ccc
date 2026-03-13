@@ -35,10 +35,15 @@ notarize:
         key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
         key: "{{.Env.MACOS_NOTARY_KEY}}"
 
-homebrew_casks:
+brews:
   - repository:
       owner: mark-jaeger
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/mark-jaeger/ccc
-    description: CLI tool for managing tmux sessions on remote machines over SSH
+    description: CLI tool for managing zmx sessions on remote machines over SSH
+    license: MIT
+    install: |
+      bin.install "ccc"
+    test: |
+      system "#{bin}/ccc", "--version"
