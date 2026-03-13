@@ -128,6 +128,28 @@ func TestSerializeProjectsConfig(t *testing.T) {
 	}
 }
 
+func TestProjectByName(t *testing.T) {
+	cfg := &ProjectsConfig{
+		Projects: []Project{
+			{Name: "proj1", Path: "/path/to/proj1"},
+			{Name: "proj2", Path: "/path/to/proj2"},
+		},
+	}
+
+	proj, found := cfg.ProjectByName("proj2")
+	if !found {
+		t.Fatal("expected to find proj2")
+	}
+	if proj.Path != "/path/to/proj2" {
+		t.Errorf("expected /path/to/proj2, got %s", proj.Path)
+	}
+
+	_, found = cfg.ProjectByName("nonexistent")
+	if found {
+		t.Error("expected not found")
+	}
+}
+
 func TestParseProjectsConfigInvalid(t *testing.T) {
 	_, err := ParseProjectsConfig([]byte("this is {{not valid toml"))
 	if err == nil {
