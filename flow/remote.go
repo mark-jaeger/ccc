@@ -30,16 +30,13 @@ func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
 
 	// Shortcut: ccc <project> — bypass host selection when only one host exists
 	if len(args) >= 1 && len(cfg.Hosts) == 1 {
-		var hostName string
-		for name := range cfg.Hosts {
-			hostName = name
-		}
+		hostName := cfg.Hosts[0].Name
 		return connectToHost(in, out, cfg, cfgPath, hostName, args)
 	}
 
 	// Shortcut: ccc <host> <project> [new]
 	if len(args) >= 2 {
-		if _, ok := cfg.Hosts[args[0]]; ok {
+		if _, ok := cfg.HostByName(args[0]); ok {
 			return connectToHost(in, out, cfg, cfgPath, args[0], args[1:])
 		}
 	}
@@ -49,22 +46,20 @@ func RunRemoteMode(in io.Reader, out io.Writer, args []string) error {
 
 func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPath string, args []string) error {
 	for {
-		names := cfg.SortedHostNames()
-		if len(names) == 0 {
+		if len(cfg.Hosts) == 0 {
 			return runFirstTimeSetup(in, out, cfgPath)
 		}
 
 		// Auto-skip single host
-		if len(names) == 1 && len(args) == 0 {
-			return connectToHost(in, out, cfg, cfgPath, names[0], nil)
+		if len(cfg.Hosts) == 1 && len(args) == 0 {
+			return connectToHost(in, out, cfg, cfgPath, cfg.Hosts[0].Name, nil)
 		}
 
-		items := make([]ui.MenuItem, len(names))
-		for i, name := range names {
-			h := cfg.Hosts[name]
+		items := make([]ui.MenuItem, len(cfg.Hosts))
+		for i, h := range cfg.Hosts {
 			items[i] = ui.MenuItem{
-				Key:   name,
-				Label: name,
+				Key:   h.Name,
+				Label: h.Name,
 				Extra: fmt.Sprintf("(%s@%s)", h.User, h.Address),
 			}
 		}
@@ -113,7 +108,7 @@ func hostSelectionLoop(in io.Reader, out io.Writer, cfg *config.ClientConfig, cf
 }
 
 func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPath string, hostName string, args []string) error {
-	host, ok := cfg.Hosts[hostName]
+	host, ok := cfg.HostByName(hostName)
 	if !ok {
 		return fmt.Errorf("unknown host: %s", hostName)
 	}

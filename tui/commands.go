@@ -23,9 +23,13 @@ func loadHostsCmd() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+		names := make([]string, len(cfg.Hosts))
+		for i, h := range cfg.Hosts {
+			names[i] = h.Name
+		}
 		return hostsLoadedMsg{
 			hosts: cfg.Hosts,
-			names: cfg.SortedHostNames(),
+			names: names,
 		}
 	}
 }

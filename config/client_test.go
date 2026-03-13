@@ -183,28 +183,6 @@ func TestRemoveHost(t *testing.T) {
 	}
 }
 
-func TestSortedHostNames(t *testing.T) {
-	cfg := &ClientConfig{
-		Hosts: []Host{
-			{Name: "charlie"},
-			{Name: "alpha"},
-			{Name: "bravo"},
-		},
-	}
-
-	names := cfg.SortedHostNames()
-	expected := []string{"alpha", "bravo", "charlie"}
-
-	if len(names) != len(expected) {
-		t.Fatalf("len = %d, want %d", len(names), len(expected))
-	}
-	for i, name := range names {
-		if name != expected[i] {
-			t.Errorf("names[%d] = %q, want %q", i, name, expected[i])
-		}
-	}
-}
-
 func TestHostValidate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -328,6 +306,34 @@ address = "192.168.1.1"
 	}
 	if cfg.Hosts[0].Name != "myhost" {
 		t.Errorf("expected myhost, got %s", cfg.Hosts[0].Name)
+	}
+}
+
+func TestSaveLoadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	original := &ClientConfig{
+		Hosts: []Host{
+			{Name: "host1", User: "user1", Address: "1.1.1.1"},
+			{Name: "host2", User: "user2", Address: "2.2.2.2", Port: 22},
+		},
+	}
+
+	if err := SaveClientConfig(path, original); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	loaded, err := LoadClientConfig(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+
+	if len(loaded.Hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(loaded.Hosts))
+	}
+	if loaded.Hosts[0].Name != "host1" || loaded.Hosts[1].Name != "host2" {
+		t.Error("hosts order not preserved")
 	}
 }
 

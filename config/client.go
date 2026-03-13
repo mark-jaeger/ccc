@@ -158,12 +158,3 @@ func (c *ClientConfig) RemoveHost(name string) {
 	c.Hosts = hosts
 }
 
-// SortedHostNames returns the host names in alphabetical order.
-func (c *ClientConfig) SortedHostNames() []string {
-	names := make([]string, 0, len(c.Hosts))
-	for _, h := range c.Hosts {
-		names = append(names, h.Name)
-	}
-	sort.Strings(names)
-	return names
-}
