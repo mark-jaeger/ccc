@@ -53,15 +53,44 @@ func (h Host) Validate() error {
 	return nil
 }
 
-// ParseClientConfigData parses TOML config data from a byte slice.
+// oldClientConfig is the legacy map-based format
+type oldClientConfig struct {
+	Hosts map[string]Host `toml:"hosts"`
+}
+
+// ParseClientConfigData parses TOML data, migrating from old format if needed.
 func ParseClientConfigData(data []byte) (*ClientConfig, error) {
+	// Try new array format first
 	var cfg ClientConfig
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	if err := toml.Unmarshal(data, &cfg); err == nil && len(cfg.Hosts) > 0 {
+		return &cfg, nil
+	}
+
+	// Try old map format
+	var oldCfg oldClientConfig
+	if err := toml.Unmarshal(data, &oldCfg); err != nil {
 		return nil, err
 	}
-	if cfg.Hosts == nil {
-		cfg.Hosts = []Host{}
+
+	// Migrate: convert map to slice, sorted alphabetically
+	if len(oldCfg.Hosts) > 0 {
+		names := make([]string, 0, len(oldCfg.Hosts))
+		for name := range oldCfg.Hosts {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		cfg.Hosts = make([]Host, len(names))
+		for i, name := range names {
+			h := oldCfg.Hosts[name]
+			h.Name = name
+			cfg.Hosts[i] = h
+		}
+		return &cfg, nil
 	}
+
+	// Empty config
+	cfg.Hosts = []Host{}
 	return &cfg, nil
 }
 

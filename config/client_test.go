@@ -278,6 +278,34 @@ func TestHostByName(t *testing.T) {
 	}
 }
 
+func TestMigrateOldFormat(t *testing.T) {
+	oldData := `
+[hosts.server1]
+user = "deploy"
+address = "10.0.0.1"
+
+[hosts.server2]
+user = "admin"
+address = "10.0.0.2"
+port = 2222
+`
+	cfg, err := ParseClientConfigData([]byte(oldData))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(cfg.Hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d", len(cfg.Hosts))
+	}
+	// After migration, hosts should have names and be sorted alphabetically
+	names := make([]string, len(cfg.Hosts))
+	for i, h := range cfg.Hosts {
+		names[i] = h.Name
+	}
+	if names[0] != "server1" || names[1] != "server2" {
+		t.Errorf("expected [server1, server2], got %v", names)
+	}
+}
+
 func TestParseArrayFormat(t *testing.T) {
 	data := `
 [[hosts]]
