@@ -60,6 +60,16 @@ func ParseProjectsConfig(data []byte) (*ProjectsConfig, error) {
 	return &cfg, nil
 }
 
+// ProjectByName finds a project by name. Returns the project and true if found.
+func (c *ProjectsConfig) ProjectByName(name string) (Project, bool) {
+	for _, p := range c.Projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Project{}, false
+}
+
 // SerializeProjectsConfig serializes a ProjectsConfig to TOML bytes.
 func SerializeProjectsConfig(cfg *ProjectsConfig) ([]byte, error) {
 	return toml.Marshal(cfg)
