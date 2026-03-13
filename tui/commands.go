@@ -198,6 +198,35 @@ func createSessionLocalCmd(projectKey, projectPath string, existing []zmx.Sessio
 	})
 }
 
+// createSessionWithNameCmd creates and attaches to a session with explicit name.
+func createSessionWithNameCmd(host config.Host, name, projectPath string) tea.Cmd {
+	args := []string{"-t", host.Address}
+	if host.User != "" {
+		args = []string{"-t", host.User + "@" + host.Address}
+	}
+	if host.Port != 0 {
+		args = append([]string{"-p", fmt.Sprintf("%d", host.Port)}, args...)
+	}
+	args = append(args, zmx.BuildCreateCommand(name, projectPath))
+
+	cmd := exec.Command("ssh", args...)
+	cmd.Env = os.Environ()
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return sessionExitedMsg{err: err}
+	})
+}
+
+// createSessionWithNameLocalCmd creates a session with explicit name locally.
+func createSessionWithNameLocalCmd(name, projectPath string) tea.Cmd {
+	cmd := exec.Command("sh", "-c", zmx.BuildCreateCommand(name, projectPath))
+	cmd.Env = os.Environ()
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return sessionExitedMsg{err: err}
+	})
+}
+
 // killSessionCmd kills a zmx session.
 func killSessionCmd(runner Runner, sessionName string) tea.Cmd {
 	return func() tea.Msg {
