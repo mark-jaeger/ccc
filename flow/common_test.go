@@ -381,7 +381,7 @@ func TestProjectFlowPathNotFoundProjectPersists(t *testing.T) {
 	}
 
 	// Project should still exist since confirmation wasn't provided
-	_, exists := findProject(projects, "myapp")
+	_, exists := projects.ProjectByName("myapp")
 	if !exists {
 		t.Error("expected project to still exist when confirmation not provided")
 	}
@@ -428,7 +428,7 @@ func TestDeleteProjectConfirmed(t *testing.T) {
 		t.Errorf("expected 1 project remaining, got %d", len(savedConfig.Projects))
 	}
 
-	_, exists := findProject(savedConfig, "myapp")
+	_, exists := savedConfig.ProjectByName("myapp")
 	if exists {
 		t.Error("expected myapp to be deleted")
 	}
@@ -453,7 +453,7 @@ func TestDeleteProjectDeclined(t *testing.T) {
 	}
 
 	// Project should still exist
-	_, exists := findProject(projects, "myapp")
+	_, exists := projects.ProjectByName("myapp")
 	if !exists {
 		t.Error("expected project to still exist after declining delete")
 	}
@@ -484,7 +484,7 @@ func TestDeleteProjectNoOnSave(t *testing.T) {
 	}
 
 	// Project should be deleted from slice
-	_, exists := findProject(projects, "myapp")
+	_, exists := projects.ProjectByName("myapp")
 	if exists {
 		t.Error("expected project to be deleted")
 	}
@@ -521,7 +521,7 @@ func TestDeleteProjectSaveError(t *testing.T) {
 	}
 
 	// Project should be rolled back (still exists)
-	_, exists := findProject(projects, "myapp")
+	_, exists := projects.ProjectByName("myapp")
 	if !exists {
 		t.Error("expected project to be rolled back after save failure")
 	}

@@ -154,7 +154,7 @@ func connectToHost(in io.Reader, out io.Writer, cfg *config.ClientConfig, cfgPat
 	// Shortcut: project specified as arg
 	if len(args) >= 1 {
 		projectKey := args[0]
-		if p, ok := findProject(projects, projectKey); ok {
+		if p, ok := projects.ProjectByName(projectKey); ok {
 			if len(args) >= 2 && args[1] == "new" {
 				return createSession(in, out, conn, projectKey, p.Path, nil)
 			}

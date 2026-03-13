@@ -39,7 +39,8 @@ type Model struct {
 	keys keyMap
 
 	// Session name input
-	sessionNameInput textinput.Model
+	sessionNameInput    textinput.Model
+	sessionNameInputErr string // validation error message
 
 	// Mode (remote vs local)
 	isLocal bool
@@ -367,6 +368,10 @@ func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // reorderProject moves the selected project up (-1) or down (+1).
 func (m Model) reorderProject(direction int) (tea.Model, tea.Cmd) {
+	if m.projects == nil || len(m.projects.Projects) == 0 {
+		return m, nil
+	}
+
 	idx := m.projectList.Index()
 	newIdx := idx + direction
 
@@ -429,15 +434,20 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Clear error on any key press
+		m.sessionNameInputErr = ""
+
 		switch msg.Type {
 		case tea.KeyEnter:
 			suffix := strings.TrimSpace(m.sessionNameInput.Value())
 
 			// Validate suffix
 			if strings.Contains(suffix, ".") {
+				m.sessionNameInputErr = "suffix cannot contain dots"
 				return m, nil
 			}
 			if strings.ContainsAny(suffix, " \t\n\r") {
+				m.sessionNameInputErr = "suffix cannot contain whitespace"
 				return m, nil
 			}
 
@@ -452,21 +462,25 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Check for conflicts
 			for _, s := range m.sessions {
 				if s.Name == name {
+					m.sessionNameInputErr = fmt.Sprintf("session %q already exists", suffix)
 					return m, nil
 				}
 			}
 
+			// Defensive nil check for remote mode
+			if !m.isLocal && m.currentHost == nil {
+				m.sessionNameInputErr = "no host selected"
+				return m, nil
+			}
+
 			// Create the session
 			m.state = StateCreatingSession
+			m.sessionNameInputErr = ""
 			if m.isLocal {
 				return m, createSessionWithNameLocalCmd(name, m.currentProjectPath)
 			}
 			return m, createSessionWithNameCmd(*m.currentHost, name, m.currentProjectPath)
 
-		case tea.KeyEsc:
-			m.sessionNameInput.Blur()
-			m.state = StateSessionSelect
-			return m, nil
 		}
 	}
 
@@ -480,6 +494,11 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 	case StateHelp:
 		m.showHelp = false
 		m.state = m.prevState
+		return m, nil
+	case StateSessionNameInput:
+		m.sessionNameInput.Blur()
+		m.sessionNameInputErr = ""
+		m.state = StateSessionSelect
 		return m, nil
 	case StateSessionSelect:
 		m.state = StateProjectSelect
@@ -553,7 +572,11 @@ func (m Model) sessionNameInputView() string {
 	b.WriteString(fmt.Sprintf("Creating session for: %s\n\n", m.currentProjectKey))
 	b.WriteString("Session suffix (empty for auto): ")
 	b.WriteString(m.sessionNameInput.View())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	if m.sessionNameInputErr != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.sessionNameInputErr))
+	}
+	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("[Enter] Create  [Esc] Cancel"))
 	return b.String()
 }

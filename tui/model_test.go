@@ -172,3 +172,240 @@ func TestBreadcrumb(t *testing.T) {
 		t.Errorf("breadcrumb should contain both: %q", b)
 	}
 }
+
+func TestNewSessionKeyTransition(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.width = 80
+	m.height = 24
+
+	// Initialize session list
+	m.SetSessions([]zmx.Session{}, "proj")
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = newModel.(Model)
+
+	if m.state != StateSessionNameInput {
+		t.Errorf("expected StateSessionNameInput, got %v", m.state)
+	}
+	if cmd == nil {
+		t.Error("expected textinput.Blink command")
+	}
+}
+
+func TestSessionNameInputEscape(t *testing.T) {
+	m := New(true)
+	m.state = StateSessionNameInput
+	m.currentProjectKey = "proj"
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = newModel.(Model)
+
+	if m.state != StateSessionSelect {
+		t.Errorf("expected StateSessionSelect, got %v", m.state)
+	}
+	if m.sessionNameInputErr != "" {
+		t.Errorf("expected no error on escape, got %q", m.sessionNameInputErr)
+	}
+}
+
+func TestSessionNameInputValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		existing    []zmx.Session
+		wantState   State
+		wantErrText string
+	}{
+		{
+			name:      "valid suffix",
+			input:     "dev",
+			existing:  nil,
+			wantState: StateCreatingSession,
+		},
+		{
+			name:        "dots rejected",
+			input:       "my.suffix",
+			existing:    nil,
+			wantState:   StateSessionNameInput,
+			wantErrText: "dots",
+		},
+		{
+			name:        "space rejected",
+			input:       "my suffix",
+			existing:    nil,
+			wantState:   StateSessionNameInput,
+			wantErrText: "whitespace",
+		},
+		{
+			name:        "tab rejected",
+			input:       "my\tsuffix",
+			existing:    nil,
+			wantState:   StateSessionNameInput,
+			wantErrText: "whitespace",
+		},
+		{
+			name:  "conflict rejected",
+			input: "main",
+			existing: []zmx.Session{
+				{Name: "ccc.proj.main", Project: "proj", Suffix: "main"},
+			},
+			wantState:   StateSessionNameInput,
+			wantErrText: "already exists",
+		},
+		{
+			name:      "empty uses auto",
+			input:     "",
+			existing:  nil,
+			wantState: StateCreatingSession,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(true) // local mode
+			m.state = StateSessionNameInput
+			m.currentProjectKey = "proj"
+			m.currentProjectPath = "/home/user/proj"
+			m.sessions = tt.existing
+
+			// Set the input value
+			m.sessionNameInput.SetValue(tt.input)
+
+			// Press Enter
+			newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = newModel.(Model)
+
+			if m.state != tt.wantState {
+				t.Errorf("expected state %v, got %v", tt.wantState, m.state)
+			}
+
+			if tt.wantErrText != "" {
+				if !strings.Contains(m.sessionNameInputErr, tt.wantErrText) {
+					t.Errorf("expected error containing %q, got %q", tt.wantErrText, m.sessionNameInputErr)
+				}
+			} else {
+				if m.sessionNameInputErr != "" {
+					t.Errorf("expected no error, got %q", m.sessionNameInputErr)
+				}
+			}
+		})
+	}
+}
+
+func TestReorderHostBoundaries(t *testing.T) {
+	m := New(false)
+	m.width = 80
+	m.height = 24
+	m.hosts = []config.Host{
+		{Name: "a", Address: "1.1.1.1"},
+		{Name: "b", Address: "2.2.2.2"},
+	}
+	m.SetHosts(m.hosts)
+	m.state = StateHostSelect
+
+	// Select first item and try to move up (boundary)
+	m.hostList.Select(0)
+	newModel, _ := m.reorderHost(-1)
+	m = newModel.(Model)
+
+	// Order should be unchanged
+	if m.hosts[0].Name != "a" {
+		t.Errorf("expected first host to be 'a', got %q", m.hosts[0].Name)
+	}
+
+	// Select last item and try to move down (boundary)
+	m.hostList.Select(1)
+	newModel, _ = m.reorderHost(1)
+	m = newModel.(Model)
+
+	// Order should be unchanged
+	if m.hosts[1].Name != "b" {
+		t.Errorf("expected second host to be 'b', got %q", m.hosts[1].Name)
+	}
+}
+
+func TestReorderHostSuccess(t *testing.T) {
+	m := New(false)
+	m.width = 80
+	m.height = 24
+	m.hosts = []config.Host{
+		{Name: "a", Address: "1.1.1.1"},
+		{Name: "b", Address: "2.2.2.2"},
+		{Name: "c", Address: "3.3.3.3"},
+	}
+	m.SetHosts(m.hosts)
+	m.state = StateHostSelect
+
+	// Select second item and move up
+	m.hostList.Select(1)
+	newModel, cmd := m.reorderHost(-1)
+	m = newModel.(Model)
+
+	// "b" should now be first
+	if m.hosts[0].Name != "b" {
+		t.Errorf("expected first host to be 'b', got %q", m.hosts[0].Name)
+	}
+	if m.hosts[1].Name != "a" {
+		t.Errorf("expected second host to be 'a', got %q", m.hosts[1].Name)
+	}
+
+	// Cursor should follow the moved item
+	if m.hostList.Index() != 0 {
+		t.Errorf("expected cursor at 0, got %d", m.hostList.Index())
+	}
+
+	// Should trigger save command
+	if cmd == nil {
+		t.Error("expected save command")
+	}
+}
+
+func TestReorderProjectBoundaries(t *testing.T) {
+	m := New(true) // local mode
+	m.width = 80
+	m.height = 24
+	m.projects = &config.ProjectsConfig{
+		Projects: []config.Project{
+			{Name: "a", Path: "/a"},
+			{Name: "b", Path: "/b"},
+		},
+	}
+	m.SetProjects(m.projects.Projects)
+	m.state = StateProjectSelect
+
+	// Select first item and try to move up (boundary)
+	m.projectList.Select(0)
+	newModel, _ := m.reorderProject(-1)
+	m = newModel.(Model)
+
+	// Order should be unchanged
+	if m.projects.Projects[0].Name != "a" {
+		t.Errorf("expected first project to be 'a', got %q", m.projects.Projects[0].Name)
+	}
+
+	// Select last item and try to move down (boundary)
+	m.projectList.Select(1)
+	newModel, _ = m.reorderProject(1)
+	m = newModel.(Model)
+
+	// Order should be unchanged
+	if m.projects.Projects[1].Name != "b" {
+		t.Errorf("expected second project to be 'b', got %q", m.projects.Projects[1].Name)
+	}
+}
+
+func TestReorderProjectNilSafe(t *testing.T) {
+	m := New(true)
+	m.state = StateProjectSelect
+	m.projects = nil
+
+	// Should not panic
+	newModel, cmd := m.reorderProject(-1)
+	m = newModel.(Model)
+
+	if cmd != nil {
+		t.Error("expected nil command when projects is nil")
+	}
+}

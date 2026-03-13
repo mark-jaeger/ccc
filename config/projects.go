@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"sort"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -28,14 +29,21 @@ type oldProjectsConfig struct {
 func ParseProjectsConfig(data []byte) (*ProjectsConfig, error) {
 	// Try new array format first
 	var cfg ProjectsConfig
-	if err := toml.Unmarshal(data, &cfg); err == nil && len(cfg.Projects) > 0 {
+	newErr := toml.Unmarshal(data, &cfg)
+	if newErr == nil && len(cfg.Projects) > 0 {
 		return &cfg, nil
 	}
 
-	// Try old map format
+	// Try old map format only if new format parsed but was empty
+	// (indicates possible old format, not a parse error)
 	var oldCfg oldProjectsConfig
-	if err := toml.Unmarshal(data, &oldCfg); err != nil {
-		return nil, err
+	oldErr := toml.Unmarshal(data, &oldCfg)
+	if oldErr != nil {
+		// Both formats failed - report the more useful error
+		if newErr != nil {
+			return nil, fmt.Errorf("parse error: %w", newErr)
+		}
+		return nil, oldErr
 	}
 
 	// Migrate: convert map to slice, sorted alphabetically
