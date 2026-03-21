@@ -11,6 +11,12 @@ import (
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
+// pathPrefix prepends common installation directories to PATH.
+// This ensures zmx is found even when ~/.cargo/bin or Homebrew paths
+// are not in PATH for non-interactive SSH sessions (which only source
+// .bash_profile/.zprofile, not .bashrc/.zshrc where PATH is often set).
+const pathPrefix = "PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\" "
+
 // Session represents a zmx session with parsed metadata.
 type Session struct {
 	Name      string // full session name, e.g., "ccc.rt1.main"
@@ -24,13 +30,13 @@ type Session struct {
 
 // BuildListCommand returns a shell command that lists all zmx sessions.
 func BuildListCommand() string {
-	return "zmx list"
+	return pathPrefix + "zmx list"
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.
 // Uses TERM=$TERM prefix to ensure terminal type passthrough over SSH.
 func BuildAttachCommand(name string) string {
-	return fmt.Sprintf("TERM=$TERM zmx attach %s", shellutil.Quote(name))
+	return fmt.Sprintf("%sTERM=$TERM zmx attach %s", pathPrefix, shellutil.Quote(name))
 }
 
 // BuildCreateCommand returns a shell command that creates a new zmx session.
@@ -38,19 +44,25 @@ func BuildAttachCommand(name string) string {
 // with a cd to the specified path first.
 // Uses TERM=$TERM prefix to ensure terminal type passthrough over SSH.
 func BuildCreateCommand(name, path string) string {
-	return fmt.Sprintf("cd %s && TERM=$TERM zmx attach %s",
-		shellutil.Quote(path), shellutil.Quote(name))
+	return fmt.Sprintf("cd %s && %sTERM=$TERM zmx attach %s",
+		shellutil.Quote(path), pathPrefix, shellutil.Quote(name))
 }
 
 // BuildKillCommand returns a shell command to kill a session by name.
 // Unlike abduco which uses PID, zmx uses the session name directly.
 func BuildKillCommand(name string) string {
-	return fmt.Sprintf("zmx kill %s", shellutil.Quote(name))
+	return fmt.Sprintf("%szmx kill %s", pathPrefix, shellutil.Quote(name))
 }
 
 // BuildCheckCommand returns a shell command to check if zmx is installed.
+// It checks both the standard PATH and common installation locations like
+// ~/.cargo/bin (for cargo install) and Homebrew paths, since non-interactive
+// SSH sessions may not have these in PATH even when zmx is installed.
 func BuildCheckCommand() string {
-	return "command -v zmx"
+	// Check standard PATH first, then common installation directories.
+	// This handles cases where ~/.cargo/bin is only added to PATH in
+	// .bashrc (not sourced by non-interactive login shells).
+	return "command -v zmx || test -x ~/.cargo/bin/zmx || test -x /opt/homebrew/bin/zmx || test -x /usr/local/bin/zmx"
 }
 
 // ParseListOutput parses the output of zmx list into a slice of Session values.
