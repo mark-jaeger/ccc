@@ -6,7 +6,7 @@ import "testing"
 
 func TestBuildListCommand(t *testing.T) {
 	got := BuildListCommand()
-	want := "zmx list"
+	want := pathPrefix + "zmx list"
 	if got != want {
 		t.Errorf("BuildListCommand() = %q, want %q", got, want)
 	}
@@ -14,7 +14,7 @@ func TestBuildListCommand(t *testing.T) {
 
 func TestBuildAttachCommand(t *testing.T) {
 	got := BuildAttachCommand("dev")
-	want := "TERM=$TERM zmx attach 'dev'"
+	want := pathPrefix + "TERM=$TERM zmx attach 'dev'"
 	if got != want {
 		t.Errorf("BuildAttachCommand() = %q, want %q", got, want)
 	}
@@ -22,7 +22,7 @@ func TestBuildAttachCommand(t *testing.T) {
 
 func TestBuildAttachCommand_WithSpecialChars(t *testing.T) {
 	got := BuildAttachCommand("my session")
-	want := "TERM=$TERM zmx attach 'my session'"
+	want := pathPrefix + "TERM=$TERM zmx attach 'my session'"
 	if got != want {
 		t.Errorf("BuildAttachCommand() = %q, want %q", got, want)
 	}
@@ -30,7 +30,7 @@ func TestBuildAttachCommand_WithSpecialChars(t *testing.T) {
 
 func TestBuildAttachCommand_WithQuotes(t *testing.T) {
 	got := BuildAttachCommand("user's session")
-	want := "TERM=$TERM zmx attach 'user'\\''s session'"
+	want := pathPrefix + "TERM=$TERM zmx attach 'user'\\''s session'"
 	if got != want {
 		t.Errorf("BuildAttachCommand() = %q, want %q", got, want)
 	}
@@ -38,7 +38,7 @@ func TestBuildAttachCommand_WithQuotes(t *testing.T) {
 
 func TestBuildCreateCommand(t *testing.T) {
 	got := BuildCreateCommand("dev", "/home/user/project")
-	want := "cd '/home/user/project' && TERM=$TERM zmx attach 'dev'"
+	want := "cd '/home/user/project' && " + pathPrefix + "TERM=$TERM zmx attach 'dev'"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
@@ -46,7 +46,7 @@ func TestBuildCreateCommand(t *testing.T) {
 
 func TestBuildCreateCommand_WithSpecialChars(t *testing.T) {
 	got := BuildCreateCommand("dev", "/home/user/project's dir")
-	want := "cd '/home/user/project'\\''s dir' && TERM=$TERM zmx attach 'dev'"
+	want := "cd '/home/user/project'\\''s dir' && " + pathPrefix + "TERM=$TERM zmx attach 'dev'"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
@@ -54,7 +54,7 @@ func TestBuildCreateCommand_WithSpecialChars(t *testing.T) {
 
 func TestBuildCreateCommand_WithSpaces(t *testing.T) {
 	got := BuildCreateCommand("my session", "/home/user/my project")
-	want := "cd '/home/user/my project' && TERM=$TERM zmx attach 'my session'"
+	want := "cd '/home/user/my project' && " + pathPrefix + "TERM=$TERM zmx attach 'my session'"
 	if got != want {
 		t.Errorf("BuildCreateCommand() = %q, want %q", got, want)
 	}
@@ -62,7 +62,7 @@ func TestBuildCreateCommand_WithSpaces(t *testing.T) {
 
 func TestBuildKillCommand(t *testing.T) {
 	got := BuildKillCommand("dev")
-	want := "zmx kill 'dev'"
+	want := pathPrefix + "zmx kill 'dev'"
 	if got != want {
 		t.Errorf("BuildKillCommand() = %q, want %q", got, want)
 	}
@@ -70,7 +70,7 @@ func TestBuildKillCommand(t *testing.T) {
 
 func TestBuildKillCommand_WithSpecialChars(t *testing.T) {
 	got := BuildKillCommand("user's session")
-	want := "zmx kill 'user'\\''s session'"
+	want := pathPrefix + "zmx kill 'user'\\''s session'"
 	if got != want {
 		t.Errorf("BuildKillCommand() = %q, want %q", got, want)
 	}
@@ -78,7 +78,8 @@ func TestBuildKillCommand_WithSpecialChars(t *testing.T) {
 
 func TestBuildCheckCommand(t *testing.T) {
 	got := BuildCheckCommand()
-	want := "command -v zmx"
+	// Check command includes fallbacks for common installation paths
+	want := "command -v zmx || test -x ~/.cargo/bin/zmx || test -x /opt/homebrew/bin/zmx || test -x /usr/local/bin/zmx"
 	if got != want {
 		t.Errorf("BuildCheckCommand() = %q, want %q", got, want)
 	}

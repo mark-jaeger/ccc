@@ -186,6 +186,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionExitedMsg:
 		// Returned from zmx attach, refresh sessions
+		// If zmx returned an error, display it
+		if msg.err != nil {
+			m.err = msg.err
+			m.state = StateError
+			return m, nil
+		}
 		if m.isLocal {
 			return m, loadSessionsLocalCmd(m.currentProjectKey)
 		}

@@ -51,7 +51,9 @@ func main() {
 
 	// Run the TUI
 	if err := tui.Run(isLocal); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Print a blank line after alt-screen exit for better visibility
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
