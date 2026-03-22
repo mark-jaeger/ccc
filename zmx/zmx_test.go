@@ -88,8 +88,8 @@ func TestBuildCheckCommand(t *testing.T) {
 // Task 2: Parsing tests
 
 func TestParseListOutput_SingleSession(t *testing.T) {
-	// zmx list format: tab-separated key=value pairs
-	output := "session_name=dev\tpid=1234\tclients=1\tstarted_in=/home/user"
+	// zmx list format: tab-separated key=value pairs (current format)
+	output := "name=dev\tpid=1234\tclients=1\tstart_dir=/home/user"
 	sessions := ParseListOutput(output)
 
 	if len(sessions) != 1 {
@@ -113,8 +113,25 @@ func TestParseListOutput_SingleSession(t *testing.T) {
 	}
 }
 
+func TestParseListOutput_LegacyFormat(t *testing.T) {
+	// Legacy zmx format with session_name and started_in
+	output := "session_name=dev\tpid=1234\tclients=1\tstarted_in=/home/user"
+	sessions := ParseListOutput(output)
+
+	if len(sessions) != 1 {
+		t.Fatalf("ParseListOutput() returned %d sessions, want 1", len(sessions))
+	}
+	s := sessions[0]
+	if s.Name != "dev" {
+		t.Errorf("Name = %q, want %q", s.Name, "dev")
+	}
+	if s.StartedIn != "/home/user" {
+		t.Errorf("StartedIn = %q, want %q", s.StartedIn, "/home/user")
+	}
+}
+
 func TestParseListOutput_CCCSession(t *testing.T) {
-	output := "session_name=ccc.myproject.main\tpid=5678\tclients=0\tstarted_in=/home/user/project"
+	output := "name=ccc.myproject.main\tpid=5678\tclients=0\tstart_dir=/home/user/project"
 	sessions := ParseListOutput(output)
 
 	if len(sessions) != 1 {
@@ -136,9 +153,9 @@ func TestParseListOutput_CCCSession(t *testing.T) {
 }
 
 func TestParseListOutput_MultipleSessions(t *testing.T) {
-	output := `session_name=ccc.proj.main	pid=1000	clients=1	started_in=/home/user/proj
-session_name=ccc.proj.2	pid=1001	clients=0	started_in=/home/user/proj
-session_name=other	pid=1002	clients=2	started_in=/tmp`
+	output := `name=ccc.proj.main	pid=1000	clients=1	start_dir=/home/user/proj
+name=ccc.proj.2	pid=1001	clients=0	start_dir=/home/user/proj
+name=other	pid=1002	clients=2	start_dir=/tmp`
 	sessions := ParseListOutput(output)
 
 	if len(sessions) != 3 {
