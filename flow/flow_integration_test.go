@@ -39,8 +39,8 @@ func TestProjectFlow_CreateNewSession(t *testing.T) {
 	tt := testutil.NewTestTmux(t)
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/tmp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/tmp"},
 		},
 	}
 
@@ -72,8 +72,8 @@ func TestProjectFlow_AttachExistingSession(t *testing.T) {
 	}
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/tmp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/tmp"},
 		},
 	}
 
@@ -108,8 +108,8 @@ func TestProjectFlow_MultipleSessionsFiltered(t *testing.T) {
 	}
 
 	projects := &config.ProjectsConfig{
-		Projects: map[string]config.Project{
-			"myapp": {Path: "/tmp"},
+		Projects: []config.Project{
+			{Name: "myapp", Path: "/tmp"},
 		},
 	}
 
