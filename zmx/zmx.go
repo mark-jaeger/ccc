@@ -67,7 +67,8 @@ func BuildCheckCommand() string {
 
 // ParseListOutput parses the output of zmx list into a slice of Session values.
 // zmx list output format: tab-separated key=value pairs per line
-// Format: session_name=<name>\tpid=<pid>\tclients=<count>\tstarted_in=<dir>
+// Format: name=<name>\tpid=<pid>\tclients=<count>\tstart_dir=<dir>
+// Also accepts legacy format: session_name=<name>\t...\tstarted_in=<dir>
 // Returns nil for empty input.
 func ParseListOutput(output string) []Session {
 	if strings.TrimSpace(output) == "" {
@@ -110,13 +111,13 @@ func parseListLine(line string) (Session, bool) {
 		key, value := parts[0], parts[1]
 
 		switch key {
-		case "session_name":
+		case "session_name", "name":
 			name = value
 		case "pid":
 			pid, _ = strconv.Atoi(value)
 		case "clients":
 			clients, _ = strconv.Atoi(value)
-		case "started_in":
+		case "started_in", "start_dir":
 			startedIn = value
 		}
 	}
