@@ -147,6 +147,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Message handlers for async operations
 	case hostsLoadedMsg:
 		m.hosts = msg.hosts
+		m.ensureMinDimensions()
 		m.SetHosts(msg.hosts)
 		return m, nil
 
@@ -171,15 +172,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectsLoadedMsg:
 		m.projects = msg.projects
-		// Ensure minimum dimensions (WindowSizeMsg may not have arrived yet in local mode)
-		w, h := m.width, m.height
-		if w == 0 {
-			w = 80
-		}
-		if h == 0 {
-			h = 24
-		}
-		m.width, m.height = w, h
+		m.ensureMinDimensions()
 		m.SetProjects(msg.projects.Projects)
 		m.state = StateProjectSelect
 		return m, nil
@@ -536,6 +529,16 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// ensureMinDimensions sets default dimensions if WindowSizeMsg hasn't arrived yet.
+func (m *Model) ensureMinDimensions() {
+	if m.width == 0 {
+		m.width = 80
+	}
+	if m.height == 0 {
+		m.height = 24
+	}
 }
 
 // isFiltering returns true if any list is in filter mode.
