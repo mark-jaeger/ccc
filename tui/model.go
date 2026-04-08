@@ -163,10 +163,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case zmxAvailableMsg:
 		// zmx is installed, now load projects
+		// In local mode, projects are already loaded from Init()
+		if m.isLocal {
+			return m, nil
+		}
 		return m, loadProjectsCmd(m.runner)
 
 	case projectsLoadedMsg:
 		m.projects = msg.projects
+		// Ensure minimum dimensions (WindowSizeMsg may not have arrived yet in local mode)
+		w, h := m.width, m.height
+		if w == 0 {
+			w = 80
+		}
+		if h == 0 {
+			h = 24
+		}
+		m.width, m.height = w, h
 		m.SetProjects(msg.projects.Projects)
 		m.state = StateProjectSelect
 		return m, nil

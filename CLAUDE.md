@@ -16,20 +16,20 @@ No Makefile or linter config exists. CI runs via GitHub Actions on tag pushes (`
 
 ## Architecture
 
-ccc is a CLI tool for managing abduco sessions on local and remote machines over SSH. It has two modes: **remote** (default, connects via SSH) and **local** (operates directly on the current machine, auto-detected when running inside an SSH session).
+ccc is a CLI tool for managing zmx sessions on local and remote machines over SSH. It has two modes: **remote** (default, connects via SSH) and **local** (operates directly on the current machine, auto-detected when running inside an SSH session).
 
 ### Package Dependency Graph
 
 ```
-main → flow → config, ssh, abduco, scan, ui, tailscale
-                ssh → config, internal/shellutil
-               scan → internal/shellutil
-             abduco → internal/shellutil
+main → tui → config, zmx, scan, ssh
+               ssh → config, internal/shellutil
+              scan → internal/shellutil
+               zmx → internal/shellutil
 ```
 
 ### Core Abstraction: Runner Interface
 
-The `Runner` interface (`flow/common.go`) decouples all workflow logic from the execution transport:
+The `Runner` interface (`tui/common.go`) decouples TUI commands from the execution transport:
 
 ```go
 type Runner interface {
@@ -38,25 +38,25 @@ type Runner interface {
 }
 ```
 
-Implementations: `ssh.Connection` (remote) and `flow.LocalRunner` (local). All abduco and scan commands are built as shell strings and executed through this interface.
+Implementations: `ssh.Connection` (remote) and local `exec.Command` calls. All zmx and scan commands are built as shell strings and executed through this interface or directly via `sh -c`.
 
 ### Control Flow
 
-`main.go` → version flag check → mode detection → `RunRemoteMode` or `RunLocalMode` → `ProjectFlow` (project menu loop) → `SessionFlow` (session menu loop) → abduco attach/create.
+`main.go` → version flag check → mode detection → `tui.Run(isLocal)` → Bubble Tea TUI with states: HostSelect → ProjectSelect → SessionSelect → zmx attach/create.
 
-Remote mode adds: host config loading → host selection loop → SSH connection → project config read from host.
+Local mode skips host selection and SSH connection. Remote mode adds: host config loading → host selection → SSH connection → project config read from host.
 
 ### Key Design Patterns
 
-- **Command building**: Packages (`abduco`, `scan`) export `Build*Command()` functions returning shell strings. All user-controlled values are quoted via `shellutil.Quote()`. Commands are executed through `Runner`, not `os/exec` directly (except in `Runner` implementations).
+- **Command building**: Packages (`zmx`, `scan`) export `Build*Command()` functions returning shell strings. All user-controlled values are quoted via `shellutil.Quote()`. Commands are executed through `Runner` or `exec.Command("sh", "-c", ...)`.
+
+- **ZMX_DIR consistency**: All zmx commands are prefixed with `ZMX_DIR=${ZMX_DIR:-/tmp/zmx-$(id -u)}` to ensure SSH sessions (where `XDG_RUNTIME_DIR` is unset) and local sessions (where systemd sets it) use the same socket directory.
 
 - **Scan fallback chain**: `scan.BuildScanChainCommand()` tries mdfind → plocate → locate → fd → find, guarded by `command -v`, using the first tool that produces non-empty output.
 
-- **Session naming**: abduco sessions use `ccc.{project}.{suffix}` naming convention. `FilterSessionsForProject` matches by Project field, with External sessions (non-ccc prefix) shown with warning.
+- **Session naming**: zmx sessions use `ccc.{project}.{suffix}` naming convention. `FilterSessionsForProject` matches by Project field, with External sessions (non-ccc prefix) shown for visibility.
 
 - **Config split**: Client-side config (`~/.ccc/config.toml`) stores host definitions locally. Project config (`~/.ccc/projects.toml`) lives on the target machine and is read via SSH in remote mode.
-
-- **Callback parameters**: `ProjectFlow` takes `onScan` and `onSave` callbacks so the same flow code works for both remote (SSH-based persistence) and local (file-based persistence) modes.
 
 ### SSH Modes
 
@@ -66,4 +66,4 @@ Interactive (`Connection.RunInteractive`): PTY allocation (`-t`), stdin/stdout/s
 
 ### Testing
 
-Tests use a `mockRunner` in `flow/common_test.go` that maps command substrings to responses/errors. UI tests use `strings.NewReader` for input and `bytes.Buffer` for output. No external test dependencies. Note: `bufio.Scanner` in `ShowMenu` buffers the full reader, so `ui.Confirm`/`ui.Prompt` called from within a `ShowMenu`-driven flow cannot read from the same `io.Reader` — they receive EOF instead.
+Tests use table-driven tests with expected command output strings. TUI tests verify model state transitions via `New(isLocal)`. No external test dependencies.

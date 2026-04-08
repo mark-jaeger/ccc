@@ -28,15 +28,24 @@ type Session struct {
 	External  bool   // true if not prefixed with "ccc."
 }
 
+// zmxDirPrefix sets ZMX_DIR to a consistent path so that SSH sessions
+// (where XDG_RUNTIME_DIR is unset) and local sessions (where systemd sets
+// XDG_RUNTIME_DIR=/run/user/$UID) use the same socket directory.
+// Respects an existing ZMX_DIR if already set.
+const zmxDirPrefix = "ZMX_DIR=${ZMX_DIR:-/tmp/zmx-$(id -u)} "
+
+// envPrefix combines ZMX_DIR and PATH settings for all zmx commands.
+const envPrefix = zmxDirPrefix + pathPrefix
+
 // BuildListCommand returns a shell command that lists all zmx sessions.
 func BuildListCommand() string {
-	return pathPrefix + "zmx list"
+	return envPrefix + "zmx list"
 }
 
 // BuildAttachCommand returns a shell command to attach to a named session.
 // Uses TERM=$TERM prefix to ensure terminal type passthrough over SSH.
 func BuildAttachCommand(name string) string {
-	return fmt.Sprintf("%sTERM=$TERM zmx attach %s", pathPrefix, shellutil.Quote(name))
+	return fmt.Sprintf(envPrefix+"TERM=$TERM zmx attach %s", shellutil.Quote(name))
 }
 
 // BuildCreateCommand returns a shell command that creates a new zmx session.
@@ -44,14 +53,14 @@ func BuildAttachCommand(name string) string {
 // with a cd to the specified path first.
 // Uses TERM=$TERM prefix to ensure terminal type passthrough over SSH.
 func BuildCreateCommand(name, path string) string {
-	return fmt.Sprintf("cd %s && %sTERM=$TERM zmx attach %s",
-		shellutil.Quote(path), pathPrefix, shellutil.Quote(name))
+	return fmt.Sprintf("cd %s && "+envPrefix+"TERM=$TERM zmx attach %s",
+		shellutil.Quote(path), shellutil.Quote(name))
 }
 
 // BuildKillCommand returns a shell command to kill a session by name.
 // Unlike abduco which uses PID, zmx uses the session name directly.
 func BuildKillCommand(name string) string {
-	return fmt.Sprintf("%szmx kill %s", pathPrefix, shellutil.Quote(name))
+	return fmt.Sprintf(envPrefix+"zmx kill %s", shellutil.Quote(name))
 }
 
 // BuildCheckCommand returns a shell command to check if zmx is installed.
