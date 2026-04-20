@@ -67,11 +67,13 @@ func BuildKillCommand(name string) string {
 // It checks both the standard PATH and common installation locations like
 // ~/.cargo/bin (for cargo install) and Homebrew paths, since non-interactive
 // SSH sessions may not have these in PATH even when zmx is installed.
+// The command outputs the path to zmx if found (required by CheckZmx).
 func BuildCheckCommand() string {
 	// Check standard PATH first, then common installation directories.
 	// This handles cases where ~/.cargo/bin is only added to PATH in
 	// .bashrc (not sourced by non-interactive login shells).
-	return "command -v zmx || test -x ~/.cargo/bin/zmx || test -x /opt/homebrew/bin/zmx || test -x /usr/local/bin/zmx"
+	// Each check outputs the path on success since CheckZmx requires non-empty output.
+	return "command -v zmx || { test -x ~/.cargo/bin/zmx && echo ~/.cargo/bin/zmx; } || { test -x /opt/homebrew/bin/zmx && echo /opt/homebrew/bin/zmx; } || { test -x /usr/local/bin/zmx && echo /usr/local/bin/zmx; }"
 }
 
 // ParseListOutput parses the output of zmx list into a slice of Session values.

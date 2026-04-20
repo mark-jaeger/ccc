@@ -79,7 +79,8 @@ func TestBuildKillCommand_WithSpecialChars(t *testing.T) {
 func TestBuildCheckCommand(t *testing.T) {
 	got := BuildCheckCommand()
 	// Check command includes fallbacks for common installation paths
-	want := "command -v zmx || test -x ~/.cargo/bin/zmx || test -x /opt/homebrew/bin/zmx || test -x /usr/local/bin/zmx"
+	// Each fallback outputs the path on success (required by CheckZmx)
+	want := "command -v zmx || { test -x ~/.cargo/bin/zmx && echo ~/.cargo/bin/zmx; } || { test -x /opt/homebrew/bin/zmx && echo /opt/homebrew/bin/zmx; } || { test -x /usr/local/bin/zmx && echo /usr/local/bin/zmx; }"
 	if got != want {
 		t.Errorf("BuildCheckCommand() = %q, want %q", got, want)
 	}
