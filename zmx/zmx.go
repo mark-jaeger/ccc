@@ -28,11 +28,12 @@ type Session struct {
 	External  bool   // true if not prefixed with "ccc."
 }
 
-// zmxDirPrefix sets ZMX_DIR to a consistent path so that SSH sessions
-// (where XDG_RUNTIME_DIR is unset) and local sessions (where systemd sets
-// XDG_RUNTIME_DIR=/run/user/$UID) use the same socket directory.
-// Respects an existing ZMX_DIR if already set.
-const zmxDirPrefix = "ZMX_DIR=${ZMX_DIR:-/tmp/zmx-$(id -u)} "
+// zmxDirPrefix sets ZMX_DIR to a path under $HOME so SSH sessions (where
+// XDG_RUNTIME_DIR is unset) and local sessions (where systemd sets it) use
+// the same socket directory, and so the directory is not subject to /tmp
+// cleanup policies (e.g. systemd-tmpfiles, manual /tmp purges) that wipe
+// sockets and orphan running daemons. Respects an existing ZMX_DIR.
+const zmxDirPrefix = "ZMX_DIR=${ZMX_DIR:-$HOME/.zmx} "
 
 // envPrefix combines ZMX_DIR and PATH settings for all zmx commands.
 const envPrefix = zmxDirPrefix + pathPrefix

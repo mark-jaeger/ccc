@@ -50,7 +50,7 @@ Local mode skips host selection and SSH connection. Remote mode adds: host confi
 
 - **Command building**: Packages (`zmx`, `scan`) export `Build*Command()` functions returning shell strings. All user-controlled values are quoted via `shellutil.Quote()`. Commands are executed through `Runner` or `exec.Command("sh", "-c", ...)`.
 
-- **ZMX_DIR consistency**: All zmx commands are prefixed with `ZMX_DIR=${ZMX_DIR:-/tmp/zmx-$(id -u)}` to ensure SSH sessions (where `XDG_RUNTIME_DIR` is unset) and local sessions (where systemd sets it) use the same socket directory.
+- **ZMX_DIR consistency**: All zmx commands are prefixed with `ZMX_DIR=${ZMX_DIR:-$HOME/.zmx}` to ensure SSH sessions (where `XDG_RUNTIME_DIR` is unset) and local sessions (where systemd sets it) resolve to the same socket directory. The location is under `$HOME` rather than `/tmp/zmx-$(id -u)` so the directory survives `/tmp` cleanup policies (systemd-tmpfiles, manual purges) — sockets there were silently wiped while their daemons kept running, leaving sessions unreachable. Matches the convention used by abduco (`~/.abduco`).
 
 - **Scan fallback chain**: `scan.BuildScanChainCommand()` tries mdfind → plocate → locate → fd → find, guarded by `command -v`, using the first tool that produces non-empty output.
 
