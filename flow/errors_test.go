@@ -114,7 +114,7 @@ func TestCheckZmxDarwinHint(t *testing.T) {
 	_ = CheckZmx(in, out, runner)
 
 	output := out.String()
-	if !strings.Contains(output, "brew install zmx") {
+	if !strings.Contains(output, "brew install neurosnap/tap/zmx") {
 		t.Errorf("expected brew hint for Darwin, got: %s", output)
 	}
 	// On Darwin, should NOT show Linux cargo hints

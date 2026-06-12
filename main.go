@@ -8,20 +8,11 @@ import (
 
 	"github.com/mark-jaeger/ccc/flow"
 	"github.com/mark-jaeger/ccc/tui"
+	"github.com/mark-jaeger/ccc/zmx"
 )
 
 // version is set at build time via ldflags; defaults to "dev" for local builds.
 var version = "dev"
-
-const zmxInstallMsg = `zmx not found
-
-Install zmx for your platform:
-
-  macOS:   brew install neurosnap/tap/zmx
-  Ubuntu:  cargo install zmx
-  Windows: cargo install zmx
-
-See https://github.com/neurosnap/zmx for details.`
 
 func main() {
 	args := os.Args[1:]
@@ -44,7 +35,7 @@ func main() {
 	// Check for zmx before starting TUI (local mode only - remote checks happen after SSH)
 	if isLocal {
 		if err := exec.Command("sh", "-c", "command -v zmx").Run(); err != nil {
-			fmt.Fprintln(os.Stderr, zmxInstallMsg)
+			fmt.Fprintln(os.Stderr, zmx.InstallMessage)
 			os.Exit(1)
 		}
 	}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -309,21 +310,11 @@ func saveProjectsLocalCmd(projects *config.ProjectsConfig) tea.Cmd {
 	}
 }
 
-const zmxInstallMsg = `zmx not found
-
-Install zmx for your platform:
-
-  macOS:   brew install neurosnap/tap/zmx
-  Ubuntu:  cargo install zmx
-  Windows: cargo install zmx
-
-See https://github.com/neurosnap/zmx for details.`
-
 // checkZmxCmd checks if zmx is installed on the target.
 func checkZmxCmd(runner Runner) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := runner.Run(zmx.BuildCheckCommand()); err != nil {
-			return errMsg{fmt.Errorf(zmxInstallMsg)}
+			return errMsg{errors.New(zmx.InstallMessage)}
 		}
 		return zmxAvailableMsg{}
 	}
@@ -334,7 +325,7 @@ func checkZmxLocalCmd() tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildCheckCommand())
 		if err := cmd.Run(); err != nil {
-			return errMsg{fmt.Errorf(zmxInstallMsg)}
+			return errMsg{errors.New(zmx.InstallMessage)}
 		}
 		return zmxAvailableMsg{}
 	}

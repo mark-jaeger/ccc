@@ -1,6 +1,31 @@
 package zmx
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestPathPrefixDoesNotShadowUserPath guards against a PATH-shadowing bug:
+// zmx is distributed via Homebrew/tarball, NOT as a cargo crate. Prepending
+// hardcoded directories (especially ~/.cargo/bin) ahead of the user's existing
+// $PATH can resolve an unrelated same-named binary instead of the real zmx.
+// The prefix must only APPEND fallbacks so the user's own resolution wins.
+func TestPathPrefixDoesNotShadowUserPath(t *testing.T) {
+	if strings.Contains(pathPrefix, ".cargo/bin") {
+		t.Errorf("pathPrefix references .cargo/bin (zmx is not a cargo crate, this shadows the real zmx): %q", pathPrefix)
+	}
+
+	pathIdx := strings.Index(pathPrefix, "$PATH")
+	if pathIdx == -1 {
+		t.Fatalf("pathPrefix must include $PATH so the user's resolution is preserved: %q", pathPrefix)
+	}
+	// Any hardcoded fallback dir must appear AFTER $PATH, never before it.
+	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+		if idx := strings.Index(pathPrefix, dir); idx != -1 && idx < pathIdx {
+			t.Errorf("fallback %q appears before $PATH and shadows the user's zmx: %q", dir, pathPrefix)
+		}
+	}
+}
 
 // Task 1: Command builder tests
 
