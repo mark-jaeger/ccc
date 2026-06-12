@@ -24,10 +24,10 @@ func CheckZmx(in io.Reader, out io.Writer, runner Runner) error {
 	fmt.Fprintf(out, "  Install zmx:\n")
 
 	if strings.Contains(osInfo, "darwin") {
-		fmt.Fprintf(out, "    brew install zmx\n")
+		fmt.Fprintf(out, "    brew install neurosnap/tap/zmx\n")
 	} else {
-		fmt.Fprintf(out, "    macOS:   brew install zmx\n")
-		fmt.Fprintf(out, "    Linux:   cargo install zmx (requires Rust)\n")
+		fmt.Fprintf(out, "    macOS:   brew install neurosnap/tap/zmx\n")
+		fmt.Fprintf(out, "    Linux:   curl -L https://zmx.sh/a/zmx-0.4.1-linux-x86_64.tar.gz | tar xz && sudo mv zmx /usr/local/bin/\n")
 	}
 
 	fmt.Fprintf(out, "\n  Opening shell so you can install it...\n")

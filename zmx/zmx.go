@@ -11,11 +11,31 @@ import (
 	"github.com/mark-jaeger/ccc/internal/shellutil"
 )
 
-// pathPrefix prepends common installation directories to PATH.
-// This ensures zmx is found even when ~/.cargo/bin or Homebrew paths
-// are not in PATH for non-interactive SSH sessions (which only source
-// .bash_profile/.zprofile, not .bashrc/.zshrc where PATH is often set).
-const pathPrefix = "PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\" "
+// InstallMessage is the canonical, user-facing instruction shown when zmx is
+// not found on a target. zmx is a Zig tool distributed as a prebuilt tarball
+// (and via Homebrew on macOS) — it is NOT a Rust crate, so "cargo install zmx"
+// does not work. The leading "zmx not found" line is matched by the TUI to
+// render this as a dedicated help screen, so keep it first.
+const InstallMessage = `zmx not found
+
+Install zmx for your platform:
+
+  macOS:  brew install neurosnap/tap/zmx
+  Linux:  curl -L https://zmx.sh/a/zmx-0.4.1-linux-x86_64.tar.gz | tar xz && sudo mv zmx /usr/local/bin/
+
+See https://zmx.sh (other versions/arches) and https://github.com/neurosnap/zmx for details.`
+
+// pathPrefix APPENDS common zmx installation directories to PATH as fallbacks.
+// This ensures zmx is found even when Homebrew/tarball paths are not in PATH
+// for non-interactive SSH sessions (which only source .bash_profile/.zprofile,
+// not .bashrc/.zshrc where PATH is often set).
+//
+// Fallbacks are appended AFTER $PATH, never prepended: prepending would let a
+// same-named binary in one of these dirs shadow the user's correct zmx. zmx is
+// a Zig tool distributed via Homebrew/tarball — it is NOT a cargo crate, so
+// ~/.cargo/bin is deliberately excluded (an unrelated ~/.cargo/bin/zmx must
+// never preempt the real one).
+const pathPrefix = "PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\" "
 
 // Session represents a zmx session with parsed metadata.
 type Session struct {
