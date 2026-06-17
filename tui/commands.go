@@ -141,20 +141,13 @@ func loadSessionsLocalCmd(projectKey string) tea.Cmd {
 
 // attachSessionCmd attaches to an existing zmx session using tea.ExecProcess.
 // This hands the terminal over to zmx for full passthrough (FR-4.x).
+//
+// The SSH command is built via ssh.Connection so it goes through a login shell
+// ($SHELL -lc) and carries every connection option (identity file, proxy jump,
+// SSH options). Building the args by hand here previously dropped both, which
+// made zmx fail to resolve (~/.local/bin not on the non-login PATH) → exit 127.
 func attachSessionCmd(host config.Host, sessionName string) tea.Cmd {
-	// Build the full SSH command with zmx attach
-	// TERM passthrough is handled via ssh -t which inherits TERM
-	args := []string{"-t", host.Address}
-	if host.User != "" {
-		args = []string{"-t", host.User + "@" + host.Address}
-	}
-	if host.Port != 0 {
-		args = append([]string{"-p", fmt.Sprintf("%d", host.Port)}, args...)
-	}
-	args = append(args, zmx.BuildAttachCommand(sessionName))
-
-	cmd := exec.Command("ssh", args...)
-	cmd.Env = os.Environ() // Inherit TERM from current environment
+	cmd := ssh.ConnectionFromHost(host).InteractiveCommand(zmx.BuildAttachCommand(sessionName))
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return sessionExitedMsg{err: err}
@@ -172,18 +165,10 @@ func attachSessionLocalCmd(sessionName string) tea.Cmd {
 }
 
 // createSessionWithNameCmd creates and attaches to a session with explicit name.
+// Like attachSessionCmd, it routes through ssh.Connection for a login shell and
+// full connection options.
 func createSessionWithNameCmd(host config.Host, name, projectPath string) tea.Cmd {
-	args := []string{"-t", host.Address}
-	if host.User != "" {
-		args = []string{"-t", host.User + "@" + host.Address}
-	}
-	if host.Port != 0 {
-		args = append([]string{"-p", fmt.Sprintf("%d", host.Port)}, args...)
-	}
-	args = append(args, zmx.BuildCreateCommand(name, projectPath))
-
-	cmd := exec.Command("ssh", args...)
-	cmd.Env = os.Environ()
+	cmd := ssh.ConnectionFromHost(host).InteractiveCommand(zmx.BuildCreateCommand(name, projectPath))
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return sessionExitedMsg{err: err}

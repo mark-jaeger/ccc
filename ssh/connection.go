@@ -107,15 +107,29 @@ func (c *Connection) Run(cmd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// RunInteractive executes a remote command interactively, handing over
-// stdin, stdout, and stderr to the calling process.
-func (c *Connection) RunInteractive(cmd string) error {
-	args := c.buildInteractiveArgs(cmd)
-	proc := exec.Command("ssh", args...)
+// InteractiveCommand builds (but does not start) an *exec.Cmd that runs cmd on
+// the remote host over SSH with PTY allocation and full stdio passthrough.
+//
+// It exists so callers that need the *exec.Cmd directly — such as the TUI, which
+// hands it to tea.ExecProcess to release and reacquire the terminal — get the
+// exact same SSH wiring as RunInteractive. Critically, the remote command is
+// wrapped in "$SHELL -lc" (a login shell) via buildInteractiveArgs, so PATH
+// additions from login profiles (e.g. ~/.local/bin, where zmx is commonly
+// installed) are honored. Building the ssh args by hand instead drops that
+// wrapping and makes zmx fail to resolve under non-login shells (exit 127).
+func (c *Connection) InteractiveCommand(cmd string) *exec.Cmd {
+	proc := exec.Command("ssh", c.buildInteractiveArgs(cmd)...)
 	proc.Stdin = os.Stdin
 	proc.Stdout = os.Stdout
 	proc.Stderr = os.Stderr
-	return proc.Run()
+	proc.Env = os.Environ()
+	return proc
+}
+
+// RunInteractive executes a remote command interactively, handing over
+// stdin, stdout, and stderr to the calling process.
+func (c *Connection) RunInteractive(cmd string) error {
+	return c.InteractiveCommand(cmd).Run()
 }
 
 // TestConnection verifies that the SSH connection works by running "echo ok".
