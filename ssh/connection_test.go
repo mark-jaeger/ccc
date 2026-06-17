@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mark-jaeger/ccc/config"
@@ -74,6 +75,41 @@ func TestBuildInteractiveArgs(t *testing.T) {
 	lastArg := args[len(args)-1]
 	if lastArg != "$SHELL -lc 'htop'" {
 		t.Errorf("expected last arg to be %q, got %q", "$SHELL -lc 'htop'", lastArg)
+	}
+}
+
+func TestInteractiveCommand(t *testing.T) {
+	c := Connection{
+		User:         "deploy",
+		Address:      "10.0.0.1",
+		Port:         2222,
+		IdentityFile: "/home/deploy/.ssh/id_ed25519",
+	}
+
+	proc := c.InteractiveCommand("zmx attach foo")
+
+	if !strings.HasSuffix(proc.Path, "ssh") {
+		t.Errorf("expected an ssh command, got %q", proc.Path)
+	}
+
+	// Remote command must run through a login shell ($SHELL -lc) so that PATH
+	// additions from login profiles (e.g. ~/.local/bin where zmx is often
+	// installed) are honored. Without this, attach/create fail with exit 127.
+	lastArg := proc.Args[len(proc.Args)-1]
+	if lastArg != "$SHELL -lc 'zmx attach foo'" {
+		t.Errorf("expected last arg to be %q, got %q", "$SHELL -lc 'zmx attach foo'", lastArg)
+	}
+
+	// Must allocate a PTY and carry connection options (which the old hand-rolled
+	// args in tui dropped).
+	if !slices.Contains(proc.Args, "-t") {
+		t.Errorf("expected -t in args, got %v", proc.Args)
+	}
+	if !containsOption(proc.Args, "-i", "/home/deploy/.ssh/id_ed25519") {
+		t.Errorf("expected identity file in args, got %v", proc.Args)
+	}
+	if !containsOption(proc.Args, "-p", "2222") {
+		t.Errorf("expected port in args, got %v", proc.Args)
 	}
 }
 
