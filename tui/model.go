@@ -100,23 +100,28 @@ const maxReconnectAttempts = 2
 // the retry loop from spinning tightly on a flapping connection.
 const reconnectBackoff = 750 * time.Millisecond
 
-// requestTimeout bounds a single cancelable connect/load/scan operation so a
-// dead network self-aborts instead of hanging for minutes on the kernel TCP
-// timeout. esc can abort sooner; this is the upper bound when the user waits.
-const requestTimeout = 12 * time.Second
-
 // beginRequest opens a new cancelable request epoch for a connect/load/scan
 // operation. It cancels any still-in-flight request, bumps reqGen so a late
-// result from the previous op is recognised as stale, and returns a bounded
+// result from the previous op is recognised as stale, and returns a cancelable
 // context plus the new generation for the command to close over and tag its
 // result with. The cancel func is retained on the model so esc (cancelRequest)
 // or the next beginRequest can abort the operation.
+//
+// The context carries no fixed deadline on purpose. The slow links this targets
+// make a single wall-clock cap actively harmful: a remote project scan
+// (find over $HOME) or a connect that walks several fallback addresses (each
+// with its own 10s ConnectTimeout) can legitimately run past any cap we'd pick,
+// so a deadline would abort a slow-but-progressing op with a spurious timeout.
+// Each underlying ssh call is already bounded — ConnectTimeout caps the
+// handshake, ServerAlive keepalives fail a dead established link in ~15-30s — so
+// a truly dead network still self-aborts. esc (cancelRequest) covers
+// user-initiated abort. Together they bound the operation without a false cap.
 func (m *Model) beginRequest() (context.Context, int) {
 	if m.cancel != nil {
 		m.cancel()
 	}
 	m.reqGen++
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return ctx, m.reqGen
 }

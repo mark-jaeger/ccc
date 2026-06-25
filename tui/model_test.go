@@ -799,6 +799,31 @@ func TestReconnectProbeStaleIgnored(t *testing.T) {
 // TestEscCancelsConnecting verifies that esc on the connecting screen cancels the
 // in-flight connect (so a dead network unblocks instead of hanging), bumps the
 // request generation, and returns to a usable host-selection screen.
+// TestBeginRequestHasNoFixedDeadline pins the deliberate design choice that a
+// cancelable request carries no wall-clock deadline. A fixed cap would falsely
+// abort a legitimately slow op over the slow links this tool targets — a remote
+// project scan, or a connect that walks several fallback addresses each with its
+// own ConnectTimeout. The op is instead bounded by ssh's own timeouts and by esc
+// (cancelRequest). If anyone reintroduces context.WithTimeout here, this fails.
+func TestBeginRequestHasNoFixedDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginRequest()
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("beginRequest context must have no fixed deadline (ssh timeouts + esc bound it)")
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+	if m.cancel == nil {
+		t.Error("beginRequest must retain a cancel func for esc/next-request to abort")
+	}
+	// The returned context must still be cancelable via the retained func.
+	m.cancel()
+	if ctx.Err() == nil {
+		t.Error("cancel func must cancel the returned context")
+	}
+}
+
 func TestEscCancelsConnecting(t *testing.T) {
 	m := New(false) // remote mode
 	m.width, m.height = 80, 24
