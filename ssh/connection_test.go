@@ -1,9 +1,12 @@
 package ssh
 
 import (
+	"context"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark-jaeger/ccc/config"
 )
@@ -247,6 +250,125 @@ func TestConnectionFromHost(t *testing.T) {
 	}
 	if len(conn.SSHOptions) != 2 || conn.SSHOptions[0] != "-o" {
 		t.Errorf("SSHOptions = %v, want [-o Foo=bar]", conn.SSHOptions)
+	}
+}
+
+// TestNonInteractiveKeepalives verifies that non-interactive args carry the
+// aggressive server-alive probes (5s interval) that let a dead link self-
+// terminate quickly instead of hanging for minutes (the "train" failure mode).
+func TestNonInteractiveKeepalives(t *testing.T) {
+	c := Connection{User: "deploy", Address: "10.0.0.1"}
+	args := c.buildNonInteractiveArgs("uptime")
+
+	if !containsOption(args, "-o", "ServerAliveInterval=5") {
+		t.Errorf("expected -o ServerAliveInterval=5 in args, got %v", args)
+	}
+	if !containsOption(args, "-o", "ServerAliveCountMax=3") {
+		t.Errorf("expected -o ServerAliveCountMax=3 in args, got %v", args)
+	}
+	if !containsOption(args, "-o", "TCPKeepAlive=no") {
+		t.Errorf("expected -o TCPKeepAlive=no in args, got %v", args)
+	}
+}
+
+// TestInteractiveKeepalives verifies that interactive args carry the gentler
+// server-alive probes (10s interval) — long enough to ride out brief tunnel
+// hiccups, short enough to tear down a truly dead attach — and that they come
+// before the -t flag (i.e. before the target host, not after the remote cmd).
+func TestInteractiveKeepalives(t *testing.T) {
+	c := Connection{User: "deploy", Address: "10.0.0.1"}
+	args := c.buildInteractiveArgs("htop")
+
+	if !containsOption(args, "-o", "ServerAliveInterval=10") {
+		t.Errorf("expected -o ServerAliveInterval=10 in args, got %v", args)
+	}
+	if !containsOption(args, "-o", "ServerAliveCountMax=3") {
+		t.Errorf("expected -o ServerAliveCountMax=3 in args, got %v", args)
+	}
+	if !containsOption(args, "-o", "TCPKeepAlive=no") {
+		t.Errorf("expected -o TCPKeepAlive=no in args, got %v", args)
+	}
+
+	// Keepalive options must precede -t (and thus the target host); options
+	// after the remote command would be ignored by ssh.
+	aliveIdx := slices.Index(args, "ServerAliveInterval=10")
+	tIdx := slices.Index(args, "-t")
+	if aliveIdx == -1 || tIdx == -1 || aliveIdx >= tIdx {
+		t.Errorf("keepalive options must come before -t, alive=%d t=%d args=%v", aliveIdx, tIdx, args)
+	}
+}
+
+// TestControlMasterNonInteractiveOnly verifies that connection multiplexing is
+// enabled for non-interactive commands (so a burst of short commands shares one
+// transport) but ABSENT from interactive attaches (a long-lived PTY gains
+// nothing from a persistent master and would just complicate teardown).
+func TestControlMasterNonInteractiveOnly(t *testing.T) {
+	c := Connection{User: "deploy", Address: "10.0.0.1"}
+
+	nonInteractive := c.buildNonInteractiveArgs("uptime")
+	if !containsOption(nonInteractive, "-o", "ControlMaster=auto") {
+		t.Errorf("expected -o ControlMaster=auto in non-interactive args, got %v", nonInteractive)
+	}
+
+	interactive := c.buildInteractiveArgs("htop")
+	if containsOption(interactive, "-o", "ControlMaster=auto") {
+		t.Errorf("did not expect -o ControlMaster=auto in interactive args, got %v", interactive)
+	}
+}
+
+// TestClassifyRunError checks that exit status 255 (ssh's transport-failure
+// sentinel) is rewritten into a human-readable "lost connection" error, while
+// any other non-zero exit (e.g. 127 = command not found) keeps the generic
+// "ssh command failed" wording.
+func TestClassifyRunError(t *testing.T) {
+	err255 := exec.Command("sh", "-c", "exit 255").Run()
+	if err255 == nil {
+		t.Fatal("expected exit 255 to produce an error")
+	}
+	got := classifyRunError(err255)
+	if !strings.Contains(got.Error(), "lost connection to host") {
+		t.Errorf("exit 255 should map to a lost-connection error, got %q", got.Error())
+	}
+
+	err127 := exec.Command("sh", "-c", "exit 127").Run()
+	if err127 == nil {
+		t.Fatal("expected exit 127 to produce an error")
+	}
+	got = classifyRunError(err127)
+	if strings.Contains(got.Error(), "lost connection to host") {
+		t.Errorf("exit 127 should NOT map to a lost-connection error, got %q", got.Error())
+	}
+	if !strings.Contains(got.Error(), "ssh command failed") {
+		t.Errorf("exit 127 should map to the generic ssh-failure error, got %q", got.Error())
+	}
+}
+
+// TestRunContextDeadline verifies that a short deadline aborts a hung command
+// promptly instead of waiting out the full child runtime. The execCommandContext
+// seam is pointed at a long "sleep" so the test exercises cancellation, not ssh.
+func TestRunContextDeadline(t *testing.T) {
+	orig := execCommandContext
+	defer func() { execCommandContext = orig }()
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sleep", "30")
+	}
+
+	c := Connection{User: "deploy", Address: "10.0.0.1"}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := c.RunContext(ctx, "uptime")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error from a deadline-exceeded RunContext")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("RunContext took %v; expected it to abort promptly on deadline", elapsed)
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected a timeout error, got %q", err.Error())
 	}
 }
 
