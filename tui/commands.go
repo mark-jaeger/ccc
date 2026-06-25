@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mark-jaeger/ccc/config"
@@ -45,12 +46,17 @@ func loadHostsCmd() tea.Cmd {
 	}
 }
 
-// connectHostCmd establishes SSH connection to a host.
+// connectHostCmd establishes an SSH connection to a host, trying the primary
+// address first and then each entry in host.FallbackAddresses in order. This
+// mirrors the non-TUI flow (flow.tryFallbackAddresses) so the live TUI can
+// recover when the primary address becomes unreachable (e.g. when a laptop
+// roams between Wi-Fi, LTE, and Tailscale and the host's IP changes).
 func connectHostCmd(name string, host config.Host) tea.Cmd {
 	return func() tea.Msg {
-		conn := ssh.ConnectionFromHost(host)
-		// Test the connection
-		if err := conn.TestConnection(); err != nil {
+		conn, err := selectWorkingConnection(host, func(c *ssh.Connection) error {
+			return c.TestConnection()
+		})
+		if err != nil {
 			return errMsg{err}
 		}
 		return hostConnectedMsg{
@@ -314,4 +320,30 @@ func checkZmxLocalCmd() tea.Cmd {
 		}
 		return zmxAvailableMsg{}
 	}
+}
+
+// selectWorkingConnection returns the first connection — the primary built from
+// host, then each host.FallbackAddresses entry in order — for which test
+// succeeds. If every candidate fails it returns an error naming the primary
+// address and each fallback that was tried, so the user can tell which routes
+// were attempted. test is injected so the selection logic stays unit-testable
+// without real SSH; connectHostCmd passes (*ssh.Connection).TestConnection.
+func selectWorkingConnection(host config.Host, test func(*ssh.Connection) error) (*ssh.Connection, error) {
+	primary := ssh.ConnectionFromHost(host)
+	if err := test(primary); err == nil {
+		return primary, nil
+	}
+
+	for _, addr := range host.FallbackAddresses {
+		fallback := primary.WithAddress(addr)
+		if err := test(fallback); err == nil {
+			return fallback, nil
+		}
+	}
+
+	if len(host.FallbackAddresses) == 0 {
+		return nil, fmt.Errorf("cannot reach host at %s", host.Address)
+	}
+	return nil, fmt.Errorf("cannot reach host: primary %s and fallbacks [%s] all failed",
+		host.Address, strings.Join(host.FallbackAddresses, ", "))
 }
