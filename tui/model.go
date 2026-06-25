@@ -100,28 +100,51 @@ const maxReconnectAttempts = 2
 // the retry loop from spinning tightly on a flapping connection.
 const reconnectBackoff = 750 * time.Millisecond
 
-// beginRequest opens a new cancelable request epoch for a connect/load/scan
+// scanTimeout is a generous wall-clock backstop for a remote project scan.
+// Unlike connect/load, a scan is a long-running remote command (find over $HOME)
+// that can wedge on a stalled mount while the ssh transport stays alive, so its
+// keepalives never trip and esc would be the only escape. The cap is
+// deliberately large — a real scan over a slow link can take many seconds — so
+// it bounds a hang without aborting a legitimately slow scan; esc cancels
+// sooner.
+const scanTimeout = 90 * time.Second
+
+// beginRequest opens a new cancelable request epoch for a connect/load
 // operation. It cancels any still-in-flight request, bumps reqGen so a late
 // result from the previous op is recognised as stale, and returns a cancelable
 // context plus the new generation for the command to close over and tag its
 // result with. The cancel func is retained on the model so esc (cancelRequest)
 // or the next beginRequest can abort the operation.
 //
-// The context carries no fixed deadline on purpose. The slow links this targets
-// make a single wall-clock cap actively harmful: a remote project scan
-// (find over $HOME) or a connect that walks several fallback addresses (each
-// with its own 10s ConnectTimeout) can legitimately run past any cap we'd pick,
-// so a deadline would abort a slow-but-progressing op with a spurious timeout.
-// Each underlying ssh call is already bounded — ConnectTimeout caps the
-// handshake, ServerAlive keepalives fail a dead established link in ~15-30s — so
-// a truly dead network still self-aborts. esc (cancelRequest) covers
-// user-initiated abort. Together they bound the operation without a false cap.
+// The context carries no fixed deadline on purpose. A single wall-clock cap
+// would false-abort a slow-but-progressing op over the slow links this targets —
+// e.g. a connect that walks several fallback addresses, each with its own
+// ConnectTimeout. A dead transport still self-aborts via ssh's own bounds
+// (ConnectTimeout for the handshake, ServerAlive keepalives for an established
+// link), and esc (cancelRequest) covers user-initiated abort. Caveat: a user who
+// overrides ServerAlive/ConnectTimeout via ssh_options can weaken the ssh bound,
+// leaving esc as the backstop; the one operation that can hang while the
+// transport stays alive — a scan — gets an explicit cap via beginScanRequest.
 func (m *Model) beginRequest() (context.Context, int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return m.installRequest(ctx, cancel)
+}
+
+// beginScanRequest is beginRequest with a generous wall-clock backstop for the
+// one operation that can hang while the transport stays alive: a remote project
+// scan. See scanTimeout.
+func (m *Model) beginScanRequest() (context.Context, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
+	return m.installRequest(ctx, cancel)
+}
+
+// installRequest cancels any in-flight request, opens a new epoch (bumping
+// reqGen), and retains the cancel func so esc or the next request can abort it.
+func (m *Model) installRequest(ctx context.Context, cancel context.CancelFunc) (context.Context, int) {
 	if m.cancel != nil {
 		m.cancel()
 	}
 	m.reqGen++
-	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return ctx, m.reqGen
 }
@@ -236,6 +259,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentHost = &msg.host
 		m.selectedHost = msg.hostName
 		m.runner = msg.runner
+		// Discard the previous host's project state before loading this host's.
+		// m.projects is host-scoped; leaving it set would let a later esc (whose
+		// StateLoading back-target keys off m.projects == nil) or a delayed result
+		// render the old host's projects against the new runner — and a subsequent
+		// select/reorder/delete would then write the wrong host's paths.
+		m.projects = nil
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
+		m.selectedProject = ""
 		m.state = StateLoading
 		// Check zmx first, only load projects if available. Open a fresh request
 		// epoch so esc can cancel the (blocking) remote check and the result is
@@ -393,9 +425,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Save and reload
 		if m.isLocal {
-			return m, saveProjectsLocalCmd(m.projects)
+			return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 		}
-		return m, saveProjectsCmd(m.runner, m.projects)
+		return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 
 	case projectDeletedMsg:
 		if m.projects != nil {
@@ -406,9 +438,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if m.isLocal {
-				return m, saveProjectsLocalCmd(m.projects)
+				return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 			}
-			return m, saveProjectsCmd(m.runner, m.projects)
+			return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 		}
 		return m, nil
 
@@ -547,7 +579,7 @@ func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case key.Matches(keyMsg, m.keys.Scan):
 			m.state = StateLoading
-			ctx, gen := m.beginRequest()
+			ctx, gen := m.beginScanRequest()
 			if m.isLocal {
 				return m, scanProjectsLocalCmd(gen)
 			}
@@ -587,9 +619,9 @@ func (m Model) reorderProject(direction int) (tea.Model, tea.Cmd) {
 
 	// Save
 	if m.isLocal {
-		return m, saveProjectsLocalCmd(m.projects)
+		return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 	}
-	return m, saveProjectsCmd(m.runner, m.projects)
+	return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 }
 
 // updateSessionSelect handles updates when in session selection state.
@@ -725,10 +757,19 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		if m.isLocal {
 			return m, tea.Quit
 		}
+		// Leaving the host invalidates anything still tied to it: bump the request
+		// epoch so a delayed save reload or load result for this host is dropped
+		// instead of clobbering the next host's screen, and drop the host-scoped
+		// project state outright.
+		m.cancelRequest()
 		m.state = StateHostSelect
 		m.selectedHost = ""
 		m.currentHost = nil
 		m.runner = nil
+		m.projects = nil
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
+		m.selectedProject = ""
 	case StateHostSelect:
 		return m, tea.Quit
 	case StateReconnecting, StateConnectionLost:

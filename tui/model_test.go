@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mark-jaeger/ccc/config"
@@ -976,5 +977,141 @@ func TestStaleErrIgnored(t *testing.T) {
 	}
 	if m.err != nil {
 		t.Errorf("stale errMsg must not set err, got %v", m.err)
+	}
+}
+
+// TestHostConnectClearsPreviousHostProjects verifies that binding a new host's
+// runner discards the previous host's project state. Otherwise a later esc
+// (whose StateLoading back-target keys off m.projects == nil) or a delayed
+// result could render the old host's projects against the new runner, and a
+// subsequent select/reorder/delete would write the wrong host's paths.
+func TestHostConnectClearsPreviousHostProjects(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 2
+	m.state = StateConnecting
+	// Stale state left over from a previous host (A).
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "A-proj", Path: "/a"}}}
+	m.currentProjectKey = "A-proj"
+	m.currentProjectPath = "/a"
+	m.selectedProject = "A-proj"
+
+	nm, _ := m.Update(hostConnectedMsg{hostName: "B", host: config.Host{Name: "B"}, runner: fakeRunner{}, gen: 2})
+	m = nm.(Model)
+
+	if m.projects != nil {
+		t.Error("connecting to a new host must clear the previous host's projects")
+	}
+	if m.currentProjectKey != "" || m.currentProjectPath != "" || m.selectedProject != "" {
+		t.Error("connecting to a new host must clear the previous host's project selection")
+	}
+	if m.state != StateLoading {
+		t.Errorf("expected StateLoading after connect, got %v", m.state)
+	}
+}
+
+// TestEscDuringFreshHostLoadReturnsToHostSelect covers the StateLoading
+// back-target when no projects have loaded yet (a fresh post-connect load):
+// esc must abandon the host and return to host selection, never to a project
+// list belonging to a different host.
+func TestEscDuringFreshHostLoadReturnsToHostSelect(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "A"}, {Name: "B"}}
+	m.SetHosts(m.hosts)
+	m.currentHost = &config.Host{Name: "B"}
+	m.runner = fakeRunner{}
+	m.projects = nil // freshly connected to B, B's projects not yet loaded
+	m.state = StateLoading
+	m.cancel = func() {}
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateHostSelect {
+		t.Errorf("esc during a fresh host's project load should return to host select, got %v", m.state)
+	}
+	if m.runner != nil {
+		t.Error("esc during a fresh host load should drop the runner")
+	}
+	_ = m.View()
+}
+
+// TestLeavingHostClearsProjectsAndBumpsEpoch verifies that backing out of a host
+// drops its project state and bumps the request epoch, so a save/load still in
+// flight for that host cannot clobber the next host's screen when it lands.
+func TestLeavingHostClearsProjectsAndBumpsEpoch(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "A"}}
+	m.SetHosts(m.hosts)
+	m.currentHost = &config.Host{Name: "A"}
+	m.runner = fakeRunner{}
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "A-proj"}}}
+	m.SetProjects(m.projects.Projects)
+	m.state = StateProjectSelect
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateHostSelect {
+		t.Fatalf("esc from project select should go to host select, got %v", m.state)
+	}
+	if m.projects != nil {
+		t.Error("leaving the host must clear its projects")
+	}
+	if m.runner != nil {
+		t.Error("leaving the host must drop the runner")
+	}
+	if m.reqGen == prevGen {
+		t.Error("leaving the host must bump the request epoch to invalidate pending saves")
+	}
+	_ = m.View()
+}
+
+// TestSaveProjectsCmdTagsResultWithGen verifies the save reload carries the
+// request epoch it was given, so a late save landing after the user has
+// navigated away is recognised as stale (gen != reqGen) and dropped instead of
+// clobbering the current screen. Previously the reload was emitted with gen 0,
+// which always bypasses the stale guard.
+func TestSaveProjectsCmdTagsResultWithGen(t *testing.T) {
+	projects := &config.ProjectsConfig{Projects: []config.Project{{Name: "p", Path: "/p"}}}
+
+	msg := saveProjectsCmd(7, fakeRunner{}, projects)()
+	pl, ok := msg.(projectsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected projectsLoadedMsg, got %T", msg)
+	}
+	if pl.gen != 7 {
+		t.Errorf("save reload should carry the request gen 7, got %d", pl.gen)
+	}
+
+	// A save that fails mid-flight must tag its error with the same epoch.
+	errMsgResult := saveProjectsCmd(9, fakeRunner{runErr: fmt.Errorf("boom")}, projects)()
+	em, ok := errMsgResult.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg on save failure, got %T", errMsgResult)
+	}
+	if em.gen != 9 {
+		t.Errorf("save error should carry the request gen 9, got %d", em.gen)
+	}
+}
+
+// TestBeginScanRequestHasDeadline pins the deliberate split: a scan — the one
+// operation that can hang while the ssh transport stays alive — gets a generous
+// wall-clock backstop, whereas beginRequest (connect/load) does not.
+func TestBeginScanRequestHasDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginScanRequest()
+	dl, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("beginScanRequest context must carry a deadline backstop")
+	}
+	if remaining := time.Until(dl); remaining <= 0 || remaining > scanTimeout+time.Second {
+		t.Errorf("scan deadline should be ~%v out, got %v", scanTimeout, remaining)
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
 	}
 }

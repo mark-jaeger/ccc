@@ -326,42 +326,45 @@ func scanProjectsLocalCmd(gen int) tea.Cmd {
 	}
 }
 
-// saveProjectsCmd saves projects config to remote. The reload it emits is
-// unguarded (gen 0): it follows a user-initiated scan/reorder/delete, not a
-// cancelable request, so it should always apply.
-func saveProjectsCmd(runner Runner, projects *config.ProjectsConfig) tea.Cmd {
+// saveProjectsCmd saves projects config to remote. gen tags the reload (and any
+// error) with the request epoch in effect when the save was triggered. The save
+// uses the blocking Run, so on a flaky link it can land long after the user has
+// moved on; tagging lets the model drop a late reload that would otherwise
+// clobber the current screen with the old host's projects (see isStaleReq).
+func saveProjectsCmd(gen int, runner Runner, projects *config.ProjectsConfig) tea.Cmd {
 	return func() tea.Msg {
 		toml, err := config.SerializeProjectsConfig(projects)
 		if err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
 		cmd := fmt.Sprintf("mkdir -p ~/.ccc && cat > ~/.ccc/projects.toml << 'EOF'\n%s\nEOF", string(toml))
 		if _, err := runner.Run(cmd); err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects}
+		return projectsLoadedMsg{projects: projects, gen: gen}
 	}
 }
 
-// saveProjectsLocalCmd saves projects config locally.
-func saveProjectsLocalCmd(projects *config.ProjectsConfig) tea.Cmd {
+// saveProjectsLocalCmd saves projects config locally. gen tags the reload for
+// the same stale-result guard as the remote path, keeping the two symmetric.
+func saveProjectsLocalCmd(gen int, projects *config.ProjectsConfig) tea.Cmd {
 	return func() tea.Msg {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
 		toml, err := config.SerializeProjectsConfig(projects)
 		if err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
 		dir := home + "/.ccc"
 		if err := os.MkdirAll(dir, 0700); err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
 		if err := os.WriteFile(dir+"/projects.toml", toml, 0600); err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects}
+		return projectsLoadedMsg{projects: projects, gen: gen}
 	}
 }
 
