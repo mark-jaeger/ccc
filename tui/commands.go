@@ -11,6 +11,7 @@ import (
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/scan"
 	"github.com/mark-jaeger/ccc/ssh"
+	"github.com/mark-jaeger/ccc/transport"
 	"github.com/mark-jaeger/ccc/zmx"
 )
 
@@ -155,15 +156,46 @@ func loadSessionsLocalCmd(projectKey string) tea.Cmd {
 	}
 }
 
+// transportParamsFromHost maps a config.Host onto transport.Params so the
+// interactive attach can be built for the host's opt-in transport (mosh/et).
+func transportParamsFromHost(host config.Host) transport.Params {
+	return transport.Params{
+		Transport:      host.Transport,
+		User:           host.User,
+		Address:        host.Address,
+		Port:           host.Port,
+		IdentityFile:   host.IdentityFile,
+		ProxyJump:      host.ProxyJump,
+		SSHOptions:     host.SSHOptions,
+		MoshServerPath: host.MoshServerPath,
+	}
+}
+
+// interactiveAttachCmd builds the *exec.Cmd that hands the terminal to zmx for
+// the remote command. It honors the host's opt-in roaming transport (mosh/et)
+// when one is configured and locally available; otherwise — including the
+// default ssh transport and any capability fallback — it uses the existing
+// ssh.Connection.InteractiveCommand, which remains the single source of truth
+// for the ssh wiring (login shell, identity/proxy/options).
+func interactiveAttachCmd(host config.Host, remoteCmd string) *exec.Cmd {
+	if cmd, err := transport.BuildInteractiveCmd(transportParamsFromHost(host), remoteCmd); err == nil {
+		return cmd
+	}
+	return ssh.ConnectionFromHost(host).InteractiveCommand(remoteCmd)
+}
+
 // attachSessionCmd attaches to an existing zmx session using tea.ExecProcess.
 // This hands the terminal over to zmx for full passthrough (FR-4.x).
 //
-// The SSH command is built via ssh.Connection so it goes through a login shell
-// ($SHELL -lc) and carries every connection option (identity file, proxy jump,
-// SSH options). Building the args by hand here previously dropped both, which
-// made zmx fail to resolve (~/.local/bin not on the non-login PATH) → exit 127.
+// The remote command is built once (via zmx) and dispatched through
+// interactiveAttachCmd, which picks the host's opt-in roaming transport
+// (mosh/et) when configured and available, falling back to ssh.Connection
+// otherwise. The ssh path still goes through a login shell ($SHELL -lc) and
+// carries every connection option (identity file, proxy jump, SSH options);
+// building the args by hand previously dropped both, making zmx fail to resolve
+// (~/.local/bin not on the non-login PATH) → exit 127.
 func attachSessionCmd(host config.Host, sessionName string) tea.Cmd {
-	cmd := ssh.ConnectionFromHost(host).InteractiveCommand(zmx.BuildAttachCommand(sessionName))
+	cmd := interactiveAttachCmd(host, zmx.BuildAttachCommand(sessionName))
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return sessionExitedMsg{err: err}
@@ -181,10 +213,11 @@ func attachSessionLocalCmd(sessionName string) tea.Cmd {
 }
 
 // createSessionWithNameCmd creates and attaches to a session with explicit name.
-// Like attachSessionCmd, it routes through ssh.Connection for a login shell and
-// full connection options.
+// Like attachSessionCmd, it dispatches through interactiveAttachCmd so the
+// host's opt-in roaming transport (mosh/et) is honored, falling back to
+// ssh.Connection (login shell, full connection options) otherwise.
 func createSessionWithNameCmd(host config.Host, name, projectPath string) tea.Cmd {
-	cmd := ssh.ConnectionFromHost(host).InteractiveCommand(zmx.BuildCreateCommand(name, projectPath))
+	cmd := interactiveAttachCmd(host, zmx.BuildCreateCommand(name, projectPath))
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return sessionExitedMsg{err: err}

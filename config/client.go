@@ -25,6 +25,16 @@ type Host struct {
 	ProxyJump         string   `toml:"proxy_jump,omitempty"`
 	SSHOptions        []string `toml:"ssh_options,omitempty"`
 	FallbackAddresses []string `toml:"fallback_addresses,omitempty"`
+
+	// Transport selects the transport used for the INTERACTIVE zmx attach only.
+	// "" or "ssh" (default) uses plain ssh. "mosh" and "et" (Eternal Terminal)
+	// are roaming-capable transports for unstable networks (e.g. trains, Wi-Fi↔LTE
+	// handoffs). Non-interactive commands (scan, zmx ls/check, config reads) always
+	// stay on plain ssh — mosh cannot pipe command stdout back.
+	Transport string `toml:"transport,omitempty"`
+	// MoshServerPath optionally overrides the remote mosh-server binary, passed as
+	// `mosh --server=<path>`. Only meaningful when Transport is "mosh".
+	MoshServerPath string `toml:"mosh_server_path,omitempty"`
 }
 
 // ClientConfig holds the client-side configuration including known hosts.
@@ -164,4 +174,3 @@ func (c *ClientConfig) RemoveHost(name string) {
 	}
 	c.Hosts = hosts
 }
-

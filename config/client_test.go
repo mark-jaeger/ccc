@@ -337,6 +337,52 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseTransportRoundTrip(t *testing.T) {
+	data := `
+[[hosts]]
+name = "train"
+user = "deploy"
+address = "10.0.0.1"
+transport = "mosh"
+mosh_server_path = "/opt/bin/mosh-server"
+`
+	cfg, err := ParseClientConfigData([]byte(data))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	h, ok := cfg.HostByName("train")
+	if !ok {
+		t.Fatal("missing host 'train'")
+	}
+	if h.Transport != "mosh" {
+		t.Errorf("h.Transport = %q, want %q", h.Transport, "mosh")
+	}
+	if h.MoshServerPath != "/opt/bin/mosh-server" {
+		t.Errorf("h.MoshServerPath = %q, want %q", h.MoshServerPath, "/opt/bin/mosh-server")
+	}
+
+	// Serialize and reload to confirm the fields round-trip.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := SaveClientConfig(path, cfg); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+	loaded, err := LoadClientConfig(path)
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	got, ok := loaded.HostByName("train")
+	if !ok {
+		t.Fatal("missing host 'train' after round-trip")
+	}
+	if got.Transport != "mosh" {
+		t.Errorf("after round-trip Transport = %q, want %q", got.Transport, "mosh")
+	}
+	if got.MoshServerPath != "/opt/bin/mosh-server" {
+		t.Errorf("after round-trip MoshServerPath = %q, want %q", got.MoshServerPath, "/opt/bin/mosh-server")
+	}
+}
+
 func TestParseArrayFormat(t *testing.T) {
 	data := `
 [[hosts]]
