@@ -59,9 +59,24 @@ func (p Params) target() string {
 // remoteShellCmd wraps the remote command in a login shell, matching
 // ssh.Connection.appendRemoteCmd: PATH additions from login profiles (where
 // zmx commonly lives, e.g. ~/.local/bin) must be honored, so the command runs
-// under `$SHELL -lc <quoted>`.
+// under `$SHELL -lc <quoted>`. The result is a SINGLE shell-command string,
+// suitable for a transport that hands its argument to a shell (et types -c into
+// the login shell it opens). It is NOT suitable where the command is execvp'd
+// directly — see remoteShellArgv.
 func remoteShellCmd(remoteCmd string) string {
 	return "$SHELL -lc " + shellutil.Quote(remoteCmd)
+}
+
+// remoteShellArgv is the argv-token form of remoteShellCmd, for transports that
+// execvp the remote command directly with NO intervening shell. mosh-server does
+// exactly this: it execs command_argv[0] (everything after `--`) verbatim. So the
+// shell, its flags, and the command MUST be separate argv tokens — a single
+// "$SHELL -lc <cmd>" string would be execvp'd as one literal program name and
+// fail with ENOENT. Likewise "$SHELL" cannot be argv[0]: nothing would expand it.
+// We therefore bootstrap a concrete /bin/sh that expands $SHELL and exec's it as
+// a login shell, preserving ssh.Connection's "$SHELL -lc" semantics.
+func remoteShellArgv(remoteCmd string) []string {
+	return []string{"/bin/sh", "-c", `exec "$SHELL" -lc ` + shellutil.Quote(remoteCmd)}
 }
 
 // sshBootstrap builds the `ssh ...` string mosh uses only to bootstrap the
@@ -82,6 +97,28 @@ func (p Params) sshBootstrap() string {
 	return strings.Join(parts, " ")
 }
 
+// etSSHOptions maps ccc's structured connection fields onto et's --ssh-option
+// values. et bootstraps with ssh and forwards each --ssh-option to `ssh -o`, so
+// Port/IdentityFile/ProxyJump map cleanly to the standard ssh config keywords.
+//
+// Freeform Host.SSHOptions are intentionally NOT forwarded here: they are stored
+// as raw ssh argv tokens (e.g. ["-o", "K=V"]), which do not map onto et's
+// -o-prefixed --ssh-option form without producing malformed args. Forwarding them
+// is left as a follow-up rather than emitted as broken commands.
+func (p Params) etSSHOptions() []string {
+	var opts []string
+	if p.Port != 0 {
+		opts = append(opts, "Port="+strconv.Itoa(p.Port))
+	}
+	if p.IdentityFile != "" {
+		opts = append(opts, "IdentityFile="+p.IdentityFile)
+	}
+	if p.ProxyJump != "" {
+		opts = append(opts, "ProxyJump="+p.ProxyJump)
+	}
+	return opts
+}
+
 // BuildArgs is the pure, unit-testable core: given the transport params and the
 // already-built remote command (from zmx.BuildAttachCommand / BuildCreateCommand),
 // it returns the executable name and argument list for the interactive attach.
@@ -96,12 +133,14 @@ func BuildArgs(p Params, remoteCmd string) (name string, args []string, err erro
 		return "", nil, ErrUseSSH
 
 	case "mosh":
-		// mosh [--server=<path>] [--ssh="ssh -p <port> -i <id> ..."] user@host -- $SHELL -lc <cmd>
+		// mosh [--server=<path>] [--ssh="ssh -p <port> -i <id> ..."] user@host -- /bin/sh -c '...'
 		//
 		// IMPORTANT: no -t. mosh provides the PTY for the `--` command itself;
 		// passing -t would be wrong. The `--` separator is required so mosh runs
-		// our command rather than a login shell. Port/identity/proxy flow through
-		// the --ssh= bootstrap option, since mosh only uses ssh to bootstrap.
+		// our command rather than a login shell. The remote command is passed as a
+		// real argv (remoteShellArgv) because mosh-server execvp's it directly with
+		// no shell. Port/identity/proxy flow through the --ssh= bootstrap option,
+		// since mosh only uses ssh to bootstrap.
 		args = []string{}
 		if p.MoshServerPath != "" {
 			args = append(args, "--server="+p.MoshServerPath)
@@ -110,15 +149,22 @@ func BuildArgs(p Params, remoteCmd string) (name string, args []string, err erro
 			// Only pass --ssh= when there is something beyond bare "ssh" to carry.
 			args = append(args, "--ssh="+boot)
 		}
-		args = append(args, p.target(), "--", remoteShellCmd(remoteCmd))
+		args = append(args, p.target(), "--")
+		args = append(args, remoteShellArgv(remoteCmd)...)
 		return "mosh", args, nil
 
 	case "et":
-		// et [--jport <port>] user@host -c <$SHELL -lc <cmd>>
-		// et runs the command via -c.
+		// et [--ssh-option K=V ...] user@host -c <$SHELL -lc <cmd>>
+		//
+		// et types the -c command into the login shell it opens on the server, so
+		// remoteShellCmd is interpreted there. et bootstraps the connection with
+		// ssh and forwards each --ssh-option to `ssh -o`, so per-host port,
+		// identity, and proxy settings flow through there. (et's --jport is the
+		// *jumphost's* et port, NOT the sshd port, so Host.Port must NOT be routed
+		// to it — doing so silently drops the real ssh port.)
 		args = []string{}
-		if p.Port != 0 {
-			args = append(args, "--jport", strconv.Itoa(p.Port))
+		for _, opt := range p.etSSHOptions() {
+			args = append(args, "--ssh-option", opt)
 		}
 		args = append(args, p.target(), "-c", remoteShellCmd(remoteCmd))
 		return "et", args, nil

@@ -26,6 +26,16 @@ func anyArgContains(args []string, substr string) bool {
 	return false
 }
 
+// indexOf returns the index of the first arg equal to v, or -1.
+func indexOf(args []string, v string) int {
+	for i, a := range args {
+		if a == v {
+			return i
+		}
+	}
+	return -1
+}
+
 const remoteAttach = "ZMX_DIR=${ZMX_DIR:-/tmp/zmx-$(id -u)} PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\" TERM=$TERM zmx attach 'ccc.rt1.main'"
 
 func TestBuildArgsMosh(t *testing.T) {
@@ -90,12 +100,51 @@ func TestBuildArgsMoshServerPath(t *testing.T) {
 	}
 }
 
+// TestBuildArgsMoshRemoteCommandIsArgv guards the mosh execvp contract: mosh-server
+// execs the tokens after `--` directly with NO shell, so the remote command must be
+// a real argv ([/bin/sh -c <script>]) rather than a single "$SHELL -lc <cmd>" string
+// — that single token would be execvp'd as one literal program name (with $SHELL
+// never expanded) and fail with ENOENT. This is the bug this test pins down.
+func TestBuildArgsMoshRemoteCommandIsArgv(t *testing.T) {
+	p := Params{Transport: "mosh", User: "deploy", Address: "10.0.0.1"}
+	_, args, err := BuildArgs(p, remoteAttach)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	sep := indexOf(args, "--")
+	if sep < 0 || sep+1 >= len(args) {
+		t.Fatalf("mosh args must have tokens after --, got %v", args)
+	}
+	cmd := args[sep+1:]
+	// The token immediately after -- must be a real executable, never a string that
+	// starts with the unexpanded $SHELL variable (the original bug).
+	if strings.HasPrefix(cmd[0], "$SHELL") {
+		t.Errorf("mosh command argv[0] must be a real shell binary, not a literal $SHELL string, got %q", cmd[0])
+	}
+	if cmd[0] != "/bin/sh" {
+		t.Errorf("mosh command argv[0] = %q, want /bin/sh", cmd[0])
+	}
+	// The shell and its -c flag must be SEPARATE argv tokens.
+	if !hasArg(cmd, "-c") {
+		t.Errorf("mosh command argv must contain a separate -c flag, got %v", cmd)
+	}
+	// The script must invoke the login shell ($SHELL -lc) and carry the command.
+	if !anyArgContains(cmd, "$SHELL") || !anyArgContains(cmd, "-lc") {
+		t.Errorf("mosh command argv must invoke $SHELL -lc, got %v", cmd)
+	}
+	if !anyArgContains(cmd, "zmx attach") {
+		t.Errorf("mosh command argv must carry the remote command, got %v", cmd)
+	}
+}
+
 func TestBuildArgsET(t *testing.T) {
 	p := Params{
-		Transport: "et",
-		User:      "deploy",
-		Address:   "10.0.0.1",
-		Port:      2222,
+		Transport:    "et",
+		User:         "deploy",
+		Address:      "10.0.0.1",
+		Port:         2222,
+		IdentityFile: "/home/deploy/.ssh/id_ed25519",
+		ProxyJump:    "bastion.example.com",
 	}
 
 	name, args, err := BuildArgs(p, remoteAttach)
@@ -115,12 +164,23 @@ func TestBuildArgsET(t *testing.T) {
 	if !anyArgContains(args, "zmx attach") {
 		t.Errorf("et args must contain remote command with zmx attach, got %v", args)
 	}
-	// --jport carries the port when non-zero.
-	if !hasArg(args, "--jport") {
-		t.Errorf("et args must contain --jport for non-zero port, got %v", args)
+	// The sshd port must NOT be routed to --jport (that flag is a jumphost ET port,
+	// unrelated to the ssh bootstrap port).
+	if hasArg(args, "--jport") {
+		t.Errorf("et args must NOT contain --jport (it is not the sshd port), got %v", args)
 	}
-	if !hasArg(args, "2222") {
-		t.Errorf("et args must contain port value 2222, got %v", args)
+	// Port, identity, and proxy must flow through --ssh-option (ssh -o keywords).
+	if !hasArg(args, "--ssh-option") {
+		t.Errorf("et args must pass connection params via --ssh-option, got %v", args)
+	}
+	if !hasArg(args, "Port=2222") {
+		t.Errorf("et args must carry Port=2222 via --ssh-option, got %v", args)
+	}
+	if !hasArg(args, "IdentityFile=/home/deploy/.ssh/id_ed25519") {
+		t.Errorf("et args must carry IdentityFile via --ssh-option, got %v", args)
+	}
+	if !hasArg(args, "ProxyJump=bastion.example.com") {
+		t.Errorf("et args must carry ProxyJump via --ssh-option, got %v", args)
 	}
 }
 
@@ -136,7 +196,11 @@ func TestBuildArgsETNoPort(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if hasArg(args, "--jport") {
-		t.Errorf("et args must NOT contain --jport when port is zero, got %v", args)
+		t.Errorf("et args must NOT contain --jport, got %v", args)
+	}
+	// With no port/identity/proxy there is nothing to forward.
+	if hasArg(args, "--ssh-option") {
+		t.Errorf("et args must NOT contain --ssh-option when no connection params set, got %v", args)
 	}
 }
 
