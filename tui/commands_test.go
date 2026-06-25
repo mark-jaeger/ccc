@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/ssh"
@@ -11,9 +13,10 @@ import (
 
 // fakeTest builds a test func for selectWorkingConnection that succeeds only
 // for the address in okAddr. It records every attempted address in *attempts so
-// callers can assert order. An empty okAddr makes every address fail.
-func fakeTest(okAddr string, attempts *[]string) func(*ssh.Connection) error {
-	return func(c *ssh.Connection) error {
+// callers can assert order. An empty okAddr makes every address fail. The ctx is
+// ignored: cancellation behavior is covered separately by a blocking probe.
+func fakeTest(okAddr string, attempts *[]string) func(context.Context, *ssh.Connection) error {
+	return func(_ context.Context, c *ssh.Connection) error {
 		*attempts = append(*attempts, c.Address)
 		if okAddr != "" && c.Address == okAddr {
 			return nil
@@ -30,7 +33,7 @@ func TestSelectWorkingConnection(t *testing.T) {
 			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
 		}
 		var attempts []string
-		conn, err := selectWorkingConnection(host, fakeTest("primary.example", &attempts))
+		conn, err := selectWorkingConnection(context.Background(), host, fakeTest("primary.example", &attempts))
 		if err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
@@ -49,7 +52,7 @@ func TestSelectWorkingConnection(t *testing.T) {
 			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
 		}
 		var attempts []string
-		conn, err := selectWorkingConnection(host, fakeTest("fallback2.example", &attempts))
+		conn, err := selectWorkingConnection(context.Background(), host, fakeTest("fallback2.example", &attempts))
 		if err != nil {
 			t.Fatalf("expected success, got error: %v", err)
 		}
@@ -74,7 +77,7 @@ func TestSelectWorkingConnection(t *testing.T) {
 			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
 		}
 		var attempts []string
-		conn, err := selectWorkingConnection(host, fakeTest("", &attempts))
+		conn, err := selectWorkingConnection(context.Background(), host, fakeTest("", &attempts))
 		if err == nil {
 			t.Fatalf("expected error, got connection %+v", conn)
 		}
@@ -92,7 +95,7 @@ func TestSelectWorkingConnection(t *testing.T) {
 			Address: "primary.example",
 		}
 		var attempts []string
-		conn, err := selectWorkingConnection(host, fakeTest("", &attempts))
+		conn, err := selectWorkingConnection(context.Background(), host, fakeTest("", &attempts))
 		if err == nil {
 			t.Fatalf("expected error, got connection %+v", conn)
 		}
@@ -106,8 +109,8 @@ func TestSelectWorkingConnection(t *testing.T) {
 
 	t.Run("no fallbacks: underlying primary error is preserved", func(t *testing.T) {
 		host := config.Host{User: "me", Address: "primary.example"}
-		test := func(c *ssh.Connection) error { return errors.New("host key verification failed") }
-		_, err := selectWorkingConnection(host, test)
+		test := func(_ context.Context, c *ssh.Connection) error { return errors.New("host key verification failed") }
+		_, err := selectWorkingConnection(context.Background(), host, test)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -122,13 +125,13 @@ func TestSelectWorkingConnection(t *testing.T) {
 			Address:           "primary.example",
 			FallbackAddresses: []string{"fallback1.example"},
 		}
-		test := func(c *ssh.Connection) error {
+		test := func(_ context.Context, c *ssh.Connection) error {
 			if c.Address == "primary.example" {
 				return errors.New("permission denied (publickey)")
 			}
 			return errors.New("connection timed out")
 		}
-		_, err := selectWorkingConnection(host, test)
+		_, err := selectWorkingConnection(context.Background(), host, test)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -136,6 +139,40 @@ func TestSelectWorkingConnection(t *testing.T) {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error should preserve %q, got: %s", want, err.Error())
 			}
+		}
+	})
+
+	// A cancelled context must short-circuit the fallback walk: the blocking
+	// probe (emulating an ssh dial that only unblocks when its bounded context is
+	// cancelled) returns the moment ctx is done, and selectWorkingConnection must
+	// then return promptly WITHOUT probing the remaining fallback addresses.
+	t.Run("ctx cancelled returns promptly without walking fallbacks", func(t *testing.T) {
+		host := config.Host{
+			User:              "me",
+			Address:           "primary.example",
+			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
+		}
+		var attempts []string
+		blocking := func(ctx context.Context, c *ssh.Connection) error {
+			attempts = append(attempts, c.Address)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go cancel()
+
+		start := time.Now()
+		_, err := selectWorkingConnection(ctx, host, blocking)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected an error when the context is cancelled mid-connect")
+		}
+		if elapsed > 2*time.Second {
+			t.Errorf("expected prompt return on cancel, took %v", elapsed)
+		}
+		if len(attempts) != 1 {
+			t.Errorf("expected the fallback walk to short-circuit after cancel, attempts=%v", attempts)
 		}
 	})
 }
@@ -159,11 +196,14 @@ func TestConnectHostCmd(t *testing.T) {
 			Address:           "primary.example",
 			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
 		}
-		msg := connectHostCmd("box", host)()
+		msg := connectHostCmd(context.Background(), 1, "box", host)()
 
 		hc, ok := msg.(hostConnectedMsg)
 		if !ok {
 			t.Fatalf("expected hostConnectedMsg, got %T (%v)", msg, msg)
+		}
+		if hc.gen != 1 {
+			t.Errorf("hostConnectedMsg.gen = %d, want 1", hc.gen)
 		}
 		if hc.hostName != "box" {
 			t.Errorf("hostName = %q, want box", hc.hostName)
@@ -189,7 +229,7 @@ func TestConnectHostCmd(t *testing.T) {
 			Address:           "primary.example",
 			FallbackAddresses: []string{"fallback1.example"},
 		}
-		msg := connectHostCmd("box", host)()
+		msg := connectHostCmd(context.Background(), 2, "box", host)()
 
 		hc, ok := msg.(hostConnectedMsg)
 		if !ok {
@@ -200,7 +240,7 @@ func TestConnectHostCmd(t *testing.T) {
 		}
 	})
 
-	t.Run("all addresses fail yields errMsg", func(t *testing.T) {
+	t.Run("all addresses fail yields errMsg tagged with gen", func(t *testing.T) {
 		var attempts []string
 		connectionTester = fakeTest("", &attempts)
 
@@ -209,9 +249,37 @@ func TestConnectHostCmd(t *testing.T) {
 			Address:           "primary.example",
 			FallbackAddresses: []string{"fallback1.example"},
 		}
-		msg := connectHostCmd("box", host)()
-		if _, ok := msg.(errMsg); !ok {
+		msg := connectHostCmd(context.Background(), 5, "box", host)()
+		em, ok := msg.(errMsg)
+		if !ok {
 			t.Fatalf("expected errMsg, got %T (%v)", msg, msg)
 		}
+		if em.gen != 5 {
+			t.Errorf("errMsg.gen = %d, want 5", em.gen)
+		}
 	})
+}
+
+// TestLoadProjectsCmdCancelledCtx verifies a load fired with an already-cancelled
+// context surfaces promptly through RunContext (rather than hanging on a dead
+// link) and that the resulting errMsg carries the originating generation so the
+// model's stale-result guard can drop it.
+func TestLoadProjectsCmdCancelledCtx(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the command runs
+
+	start := time.Now()
+	msg := loadProjectsCmd(ctx, 7, fakeRunner{blockOnCtx: true})()
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected prompt return on a cancelled context, took %v", elapsed)
+	}
+	em, ok := msg.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg, got %T (%v)", msg, msg)
+	}
+	if em.gen != 7 {
+		t.Errorf("errMsg.gen = %d, want 7", em.gen)
+	}
 }

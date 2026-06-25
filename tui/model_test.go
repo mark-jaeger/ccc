@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -667,12 +668,23 @@ func TestSessionExitedCleanResets(t *testing.T) {
 	}
 }
 
-// fakeRunner is a Runner stub for exercising remote-mode reconnect probes.
+// fakeRunner is a Runner stub for exercising remote-mode reconnect probes and
+// the cancelable load path. When blockOnCtx is set, RunContext blocks until the
+// context is done and then returns its error, emulating an ssh child that only
+// unblocks once its bounded context is cancelled or times out.
 type fakeRunner struct {
-	runErr error
+	runErr     error
+	blockOnCtx bool
 }
 
-func (f fakeRunner) Run(string) (string, error)  { return "", f.runErr }
+func (f fakeRunner) Run(string) (string, error) { return "", f.runErr }
+func (f fakeRunner) RunContext(ctx context.Context, _ string) (string, error) {
+	if f.blockOnCtx {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return "", f.runErr
+}
 func (f fakeRunner) RunInteractive(string) error { return nil }
 
 // TestErrorRecoveryInitializesList verifies that recovering from StateError when
@@ -781,5 +793,163 @@ func TestReconnectProbeStaleIgnored(t *testing.T) {
 
 	if cmd != nil {
 		t.Error("expected a stale probe result to be ignored (nil cmd)")
+	}
+}
+
+// TestEscCancelsConnecting verifies that esc on the connecting screen cancels the
+// in-flight connect (so a dead network unblocks instead of hanging), bumps the
+// request generation, and returns to a usable host-selection screen.
+func TestEscCancelsConnecting(t *testing.T) {
+	m := New(false) // remote mode
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "h", Address: "1.2.3.4"}}
+	m.state = StateConnecting
+	canceled := false
+	m.cancel = func() { canceled = true }
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if !canceled {
+		t.Error("expected the in-flight connect context to be canceled")
+	}
+	if m.state != StateHostSelect {
+		t.Errorf("expected StateHostSelect, got %v", m.state)
+	}
+	if m.reqGen != prevGen+1 {
+		t.Errorf("expected reqGen bumped to %d, got %d", prevGen+1, m.reqGen)
+	}
+	// The destination list must be (re)initialized so rendering/updates don't
+	// panic on a zero-value list.Model.
+	_ = m.View()
+}
+
+// TestEscCancelsLoading verifies that esc on the loading screen cancels the
+// in-flight load, bumps the request generation, and steps back to project
+// selection (projects already loaded).
+func TestEscCancelsLoading(t *testing.T) {
+	m := New(false) // remote mode
+	m.width, m.height = 80, 24
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "p", Path: "/p"}}}
+	m.state = StateLoading
+	canceled := false
+	m.cancel = func() { canceled = true }
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if !canceled {
+		t.Error("expected the in-flight load context to be canceled")
+	}
+	if m.state != StateProjectSelect {
+		t.Errorf("expected StateProjectSelect, got %v", m.state)
+	}
+	if m.reqGen != prevGen+1 {
+		t.Errorf("expected reqGen bumped to %d, got %d", prevGen+1, m.reqGen)
+	}
+	_ = m.View()
+}
+
+// TestStaleHostConnectedIgnored verifies a hostConnectedMsg from a superseded
+// request generation is dropped (runner/state untouched), while a current-gen
+// one is applied.
+func TestStaleHostConnectedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 3
+	m.state = StateConnecting
+
+	// Stale: gen does not match reqGen.
+	nm, _ := m.Update(hostConnectedMsg{hostName: "h", host: config.Host{Name: "h"}, runner: fakeRunner{}, gen: 2})
+	m = nm.(Model)
+	if m.runner != nil {
+		t.Error("stale hostConnectedMsg must not set the runner")
+	}
+	if m.state != StateConnecting {
+		t.Errorf("stale hostConnectedMsg must not change state, got %v", m.state)
+	}
+
+	// Current: gen matches reqGen.
+	nm, _ = m.Update(hostConnectedMsg{hostName: "h", host: config.Host{Name: "h"}, runner: fakeRunner{}, gen: 3})
+	m = nm.(Model)
+	if m.runner == nil {
+		t.Error("current hostConnectedMsg should set the runner")
+	}
+	if m.state != StateLoading {
+		t.Errorf("current hostConnectedMsg should advance to StateLoading, got %v", m.state)
+	}
+}
+
+// TestStaleProjectsLoadedIgnored verifies a projectsLoadedMsg from a superseded
+// generation is dropped while a current-gen one is applied.
+func TestStaleProjectsLoadedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 5
+	m.state = StateLoading
+
+	stale := &config.ProjectsConfig{Projects: []config.Project{{Name: "stale"}}}
+	nm, _ := m.Update(projectsLoadedMsg{projects: stale, gen: 4})
+	m = nm.(Model)
+	if m.state != StateLoading {
+		t.Errorf("stale projectsLoadedMsg must not change state, got %v", m.state)
+	}
+	if m.projects != nil {
+		t.Error("stale projectsLoadedMsg must not set projects")
+	}
+
+	current := &config.ProjectsConfig{Projects: []config.Project{{Name: "p"}}}
+	nm, _ = m.Update(projectsLoadedMsg{projects: current, gen: 5})
+	m = nm.(Model)
+	if m.state != StateProjectSelect {
+		t.Errorf("current projectsLoadedMsg should advance to StateProjectSelect, got %v", m.state)
+	}
+	if m.projects != current {
+		t.Error("current projectsLoadedMsg should set projects")
+	}
+}
+
+// TestStaleSessionsLoadedIgnored verifies a sessionsLoadedMsg from a superseded
+// generation is dropped while a current-gen one is applied.
+func TestStaleSessionsLoadedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.currentProjectKey = "proj"
+	m.reqGen = 9
+	m.state = StateLoading
+
+	nm, _ := m.Update(sessionsLoadedMsg{sessions: []zmx.Session{{Name: "ccc.proj.x"}}, gen: 8})
+	m = nm.(Model)
+	if m.state != StateLoading {
+		t.Errorf("stale sessionsLoadedMsg must not change state, got %v", m.state)
+	}
+	if m.sessions != nil {
+		t.Error("stale sessionsLoadedMsg must not set sessions")
+	}
+
+	nm, _ = m.Update(sessionsLoadedMsg{sessions: []zmx.Session{{Name: "ccc.proj.main"}}, gen: 9})
+	m = nm.(Model)
+	if m.state != StateSessionSelect {
+		t.Errorf("current sessionsLoadedMsg should advance to StateSessionSelect, got %v", m.state)
+	}
+}
+
+// TestStaleErrIgnored verifies an errMsg from a superseded request generation is
+// dropped instead of clobbering the screen with StateError.
+func TestStaleErrIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 4
+	m.state = StateLoading
+
+	nm, _ := m.Update(errMsg{err: fmt.Errorf("late failure"), gen: 3})
+	m = nm.(Model)
+	if m.state == StateError {
+		t.Error("stale errMsg must not switch to StateError")
+	}
+	if m.err != nil {
+		t.Errorf("stale errMsg must not set err, got %v", m.err)
 	}
 }

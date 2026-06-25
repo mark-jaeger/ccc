@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -20,11 +21,11 @@ func saveHostsCmd(hosts []config.Host) tea.Cmd {
 	return func() tea.Msg {
 		path, err := config.DefaultClientConfigPath()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		cfg := &config.ClientConfig{Hosts: hosts}
 		if err := config.SaveClientConfig(path, cfg); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return nil // success, no message needed
 	}
@@ -35,11 +36,11 @@ func loadHostsCmd() tea.Cmd {
 	return func() tea.Msg {
 		path, err := config.DefaultClientConfigPath()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		cfg, err := config.LoadClientConfig(path)
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return hostsLoadedMsg{
 			hosts: cfg.Hosts,
@@ -48,20 +49,29 @@ func loadHostsCmd() tea.Cmd {
 }
 
 // connectionTester probes whether a candidate connection is reachable. It is a
-// package-level seam (defaulting to (*ssh.Connection).TestConnection) so
-// connectHostCmd's fallback wiring can be unit-tested without real SSH.
-var connectionTester = func(c *ssh.Connection) error { return c.TestConnection() }
+// package-level seam (defaulting to (*ssh.Connection).TestConnectionContext) so
+// connectHostCmd's fallback wiring can be unit-tested without real SSH. It takes
+// the connect's context so a probe can be aborted mid-flight (esc) or bounded
+// (dead link) instead of hanging on the kernel TCP timeout.
+var connectionTester = func(ctx context.Context, c *ssh.Connection) error {
+	return c.TestConnectionContext(ctx)
+}
 
 // connectHostCmd establishes an SSH connection to a host, trying the primary
 // address first and then each entry in host.FallbackAddresses in order. This
 // mirrors the non-TUI flow (flow.tryFallbackAddresses) so the live TUI can
 // recover when the primary address becomes unreachable (e.g. when a laptop
 // roams between Wi-Fi, LTE, and Tailscale and the host's IP changes).
-func connectHostCmd(name string, host config.Host) tea.Cmd {
+//
+// ctx bounds and cancels the whole primary+fallback probe so an esc (which
+// cancels ctx) returns promptly instead of walking every dead address; gen tags
+// the result so the model can drop it if the user has since canceled or started
+// a different connect.
+func connectHostCmd(ctx context.Context, gen int, name string, host config.Host) tea.Cmd {
 	return func() tea.Msg {
-		conn, err := selectWorkingConnection(host, connectionTester)
+		conn, err := selectWorkingConnection(ctx, host, connectionTester)
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 		// selectWorkingConnection may have fallen back to one of
 		// host.FallbackAddresses. Record the address that actually worked on the
@@ -74,40 +84,45 @@ func connectHostCmd(name string, host config.Host) tea.Cmd {
 			hostName: name,
 			host:     host,
 			runner:   conn,
+			gen:      gen,
 		}
 	}
 }
 
-// loadProjectsCmd loads projects from remote ~/.ccc/projects.toml.
-func loadProjectsCmd(runner Runner) tea.Cmd {
+// loadProjectsCmd loads projects from remote ~/.ccc/projects.toml. It runs
+// through RunContext so a dead link self-aborts (or esc cancels) instead of
+// hanging; gen tags the result for the model's stale-result guard.
+func loadProjectsCmd(ctx context.Context, gen int, runner Runner) tea.Cmd {
 	return func() tea.Msg {
 		// Read projects.toml via runner
-		output, err := runner.Run("cat ~/.ccc/projects.toml 2>/dev/null || echo ''")
+		output, err := runner.RunContext(ctx, "cat ~/.ccc/projects.toml 2>/dev/null || echo ''")
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 
 		if output == "" {
 			// Return empty projects if file doesn't exist
 			return projectsLoadedMsg{projects: &config.ProjectsConfig{
 				Projects: []config.Project{},
-			}}
+			}, gen: gen}
 		}
 
 		projects, err := config.ParseProjectsConfig([]byte(output))
 		if err != nil {
-			return errMsg{fmt.Errorf("failed to parse projects.toml: %w", err)}
+			return errMsg{err: fmt.Errorf("failed to parse projects.toml: %w", err), gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects}
+		return projectsLoadedMsg{projects: projects, gen: gen}
 	}
 }
 
-// loadProjectsLocalCmd loads projects from local ~/.ccc/projects.toml.
-func loadProjectsLocalCmd() tea.Cmd {
+// loadProjectsLocalCmd loads projects from local ~/.ccc/projects.toml. Local
+// reads cannot hang on the network so there is no context; gen is echoed for
+// uniform stale-result handling (it is 0 — unguarded — at startup).
+func loadProjectsLocalCmd(gen int) tea.Cmd {
 	return func() tea.Msg {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 		path := home + "/.ccc/projects.toml"
 		data, err := os.ReadFile(path)
@@ -115,44 +130,46 @@ func loadProjectsLocalCmd() tea.Cmd {
 			// Return empty projects if file doesn't exist
 			return projectsLoadedMsg{projects: &config.ProjectsConfig{
 				Projects: []config.Project{},
-			}}
+			}, gen: gen}
 		}
 		projects, err := config.ParseProjectsConfig(data)
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects}
+		return projectsLoadedMsg{projects: projects, gen: gen}
 	}
 }
 
-// loadSessionsCmd lists zmx sessions for the current project.
-func loadSessionsCmd(runner Runner, projectKey string) tea.Cmd {
+// loadSessionsCmd lists zmx sessions for the current project. It runs through
+// RunContext so a dead link self-aborts (or esc cancels); gen tags the result.
+func loadSessionsCmd(ctx context.Context, gen int, runner Runner, projectKey string) tea.Cmd {
 	return func() tea.Msg {
-		output, err := runner.Run(zmx.BuildListCommand())
+		output, err := runner.RunContext(ctx, zmx.BuildListCommand())
 		if err != nil {
 			// Treat as no sessions
-			return sessionsLoadedMsg{sessions: nil}
+			return sessionsLoadedMsg{sessions: nil, gen: gen}
 		}
 
 		allSessions := zmx.ParseListOutput(output)
 		sessions := zmx.FilterSessionsForProject(allSessions, projectKey)
-		return sessionsLoadedMsg{sessions: sessions}
+		return sessionsLoadedMsg{sessions: sessions, gen: gen}
 	}
 }
 
-// loadSessionsLocalCmd lists zmx sessions locally.
-func loadSessionsLocalCmd(projectKey string) tea.Cmd {
+// loadSessionsLocalCmd lists zmx sessions locally. gen is echoed for uniform
+// stale-result handling.
+func loadSessionsLocalCmd(gen int, projectKey string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildListCommand())
 		out, err := cmd.Output()
 		if err != nil {
 			// Treat as no sessions
-			return sessionsLoadedMsg{sessions: nil}
+			return sessionsLoadedMsg{sessions: nil, gen: gen}
 		}
 
 		allSessions := zmx.ParseListOutput(string(out))
 		sessions := zmx.FilterSessionsForProject(allSessions, projectKey)
-		return sessionsLoadedMsg{sessions: sessions}
+		return sessionsLoadedMsg{sessions: sessions, gen: gen}
 	}
 }
 
@@ -238,7 +255,7 @@ func createSessionWithNameLocalCmd(name, projectPath string) tea.Cmd {
 func killSessionCmd(runner Runner, sessionName string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := runner.Run(zmx.BuildKillCommand(sessionName)); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return sessionKilledMsg{name: sessionName}
 	}
@@ -249,24 +266,25 @@ func killSessionLocalCmd(sessionName string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildKillCommand(sessionName))
 		if err := cmd.Run(); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return sessionKilledMsg{name: sessionName}
 	}
 }
 
-// scanProjectsCmd runs project scanning on remote.
-func scanProjectsCmd(runner Runner) tea.Cmd {
+// scanProjectsCmd runs project scanning on remote. Both remote reads run through
+// RunContext so a dead link self-aborts (or esc cancels); gen tags the result.
+func scanProjectsCmd(ctx context.Context, gen int, runner Runner) tea.Cmd {
 	return func() tea.Msg {
 		// Get home directory on remote
-		homeDir, err := runner.Run("echo $HOME")
+		homeDir, err := runner.RunContext(ctx, "echo $HOME")
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 
-		output, err := runner.Run(scan.BuildScanChainCommand(homeDir))
+		output, err := runner.RunContext(ctx, scan.BuildScanChainCommand(homeDir))
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 
 		results := scan.ParseScanResults(output)
@@ -277,22 +295,23 @@ func scanProjectsCmd(runner Runner) tea.Cmd {
 				path: r.Path,
 			})
 		}
-		return scanCompleteMsg{results: scanResults}
+		return scanCompleteMsg{results: scanResults, gen: gen}
 	}
 }
 
-// scanProjectsLocalCmd runs project scanning locally.
-func scanProjectsLocalCmd() tea.Cmd {
+// scanProjectsLocalCmd runs project scanning locally. gen is echoed for uniform
+// stale-result handling.
+func scanProjectsLocalCmd(gen int) tea.Cmd {
 	return func() tea.Msg {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 
 		cmd := exec.Command("sh", "-c", scan.BuildScanChainCommand(homeDir))
 		out, err := cmd.Output()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err, gen: gen}
 		}
 
 		results := scan.ParseScanResults(string(out))
@@ -303,20 +322,22 @@ func scanProjectsLocalCmd() tea.Cmd {
 				path: r.Path,
 			})
 		}
-		return scanCompleteMsg{results: scanResults}
+		return scanCompleteMsg{results: scanResults, gen: gen}
 	}
 }
 
-// saveProjectsCmd saves projects config to remote.
+// saveProjectsCmd saves projects config to remote. The reload it emits is
+// unguarded (gen 0): it follows a user-initiated scan/reorder/delete, not a
+// cancelable request, so it should always apply.
 func saveProjectsCmd(runner Runner, projects *config.ProjectsConfig) tea.Cmd {
 	return func() tea.Msg {
 		toml, err := config.SerializeProjectsConfig(projects)
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		cmd := fmt.Sprintf("mkdir -p ~/.ccc && cat > ~/.ccc/projects.toml << 'EOF'\n%s\nEOF", string(toml))
 		if _, err := runner.Run(cmd); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return projectsLoadedMsg{projects: projects}
 	}
@@ -327,41 +348,44 @@ func saveProjectsLocalCmd(projects *config.ProjectsConfig) tea.Cmd {
 	return func() tea.Msg {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		toml, err := config.SerializeProjectsConfig(projects)
 		if err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		dir := home + "/.ccc"
 		if err := os.MkdirAll(dir, 0700); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		if err := os.WriteFile(dir+"/projects.toml", toml, 0600); err != nil {
-			return errMsg{err}
+			return errMsg{err: err}
 		}
 		return projectsLoadedMsg{projects: projects}
 	}
 }
 
-// checkZmxCmd checks if zmx is installed on the target.
-func checkZmxCmd(runner Runner) tea.Cmd {
+// checkZmxCmd checks if zmx is installed on the target. It runs through
+// RunContext so a dead link self-aborts (or esc cancels) instead of hanging in
+// the StateLoading window between connect and project load; gen tags the result.
+func checkZmxCmd(ctx context.Context, gen int, runner Runner) tea.Cmd {
 	return func() tea.Msg {
-		if _, err := runner.Run(zmx.BuildCheckCommand()); err != nil {
-			return errMsg{errors.New(zmx.InstallMessage)}
+		if _, err := runner.RunContext(ctx, zmx.BuildCheckCommand()); err != nil {
+			return errMsg{err: errors.New(zmx.InstallMessage), gen: gen}
 		}
-		return zmxAvailableMsg{}
+		return zmxAvailableMsg{gen: gen}
 	}
 }
 
-// checkZmxLocalCmd checks if zmx is installed locally.
-func checkZmxLocalCmd() tea.Cmd {
+// checkZmxLocalCmd checks if zmx is installed locally. gen is echoed for uniform
+// stale-result handling (0 — unguarded — at startup).
+func checkZmxLocalCmd(gen int) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildCheckCommand())
 		if err := cmd.Run(); err != nil {
-			return errMsg{errors.New(zmx.InstallMessage)}
+			return errMsg{err: errors.New(zmx.InstallMessage), gen: gen}
 		}
-		return zmxAvailableMsg{}
+		return zmxAvailableMsg{gen: gen}
 	}
 }
 
@@ -373,10 +397,15 @@ func checkZmxLocalCmd() tea.Cmd {
 // mismatch, timeout). This preserves the diagnostic detail the pre-fallback TUI
 // surfaced by returning TestConnection's error directly. test is injected so the
 // selection logic stays unit-testable without real SSH; connectHostCmd passes
-// (*ssh.Connection).TestConnection.
-func selectWorkingConnection(host config.Host, test func(*ssh.Connection) error) (*ssh.Connection, error) {
+// connectionTester (TestConnectionContext).
+//
+// ctx is threaded into each probe and checked between fallbacks: once the caller
+// cancels (esc) or the overall deadline passes, the walk short-circuits instead
+// of dialing every remaining dead address — the difference between a prompt
+// abort and a minutes-long freeze.
+func selectWorkingConnection(ctx context.Context, host config.Host, test func(context.Context, *ssh.Connection) error) (*ssh.Connection, error) {
 	primary := ssh.ConnectionFromHost(host)
-	primErr := test(primary)
+	primErr := test(ctx, primary)
 	if primErr == nil {
 		return primary, nil
 	}
@@ -387,8 +416,14 @@ func selectWorkingConnection(host config.Host, test func(*ssh.Connection) error)
 
 	failures := []string{fmt.Sprintf("%s: %v", host.Address, primErr)}
 	for _, addr := range host.FallbackAddresses {
+		// Stop probing once the connect has been canceled (esc) or its deadline
+		// has passed, so an aborted connect returns promptly.
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, fmt.Sprintf("aborted: %v", err))
+			return nil, fmt.Errorf("cannot reach host: connect aborted [%s]", strings.Join(failures, "; "))
+		}
 		fallback := primary.WithAddress(addr)
-		err := test(fallback)
+		err := test(ctx, fallback)
 		if err == nil {
 			return fallback, nil
 		}

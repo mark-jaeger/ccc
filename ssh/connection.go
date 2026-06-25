@@ -287,8 +287,20 @@ func (c *Connection) RunInteractive(cmd string) error {
 }
 
 // TestConnection verifies that the SSH connection works by running "echo ok".
+//
+// It is a thin wrapper over TestConnectionContext with a background context, so
+// existing callers are unchanged while the cancellable form is available to the
+// TUI connect path.
 func (c *Connection) TestConnection() error {
-	out, err := c.Run("echo ok")
+	return c.TestConnectionContext(context.Background())
+}
+
+// TestConnectionContext is the cancellable form of TestConnection: it runs the
+// "echo ok" probe through RunContext so an in-flight connect attempt can be
+// aborted when ctx is cancelled (the user pressed esc) or its deadline expires
+// (a dead link), instead of hanging on the kernel TCP timeout.
+func (c *Connection) TestConnectionContext(ctx context.Context) error {
+	out, err := c.RunContext(ctx, "echo ok")
 	if err != nil {
 		return fmt.Errorf("connection test failed: %w", err)
 	}
