@@ -316,6 +316,43 @@ func TestControlMasterNonInteractiveOnly(t *testing.T) {
 	}
 }
 
+// TestControlPathDistinguishesAuthAndRouting verifies that the multiplex socket
+// is keyed by the full effective connection, not just OpenSSH's %C (which
+// ignores IdentityFile, ProxyJump, and arbitrary SSHOptions). Two hosts sharing
+// user@address:port but differing in key or routing must NOT share a master, or
+// a command could run over the wrong trust boundary; an identical config must
+// stay stable so multiplexing actually reuses its master.
+func TestControlPathDistinguishesAuthAndRouting(t *testing.T) {
+	base := Connection{User: "deploy", Address: "10.0.0.1", Port: 22}
+
+	withKeyA := base
+	withKeyA.IdentityFile = "/keys/a"
+	withKeyB := base
+	withKeyB.IdentityFile = "/keys/b"
+
+	pathA := controlPathArg(t, withKeyA.buildNonInteractiveArgs("uptime"))
+	pathB := controlPathArg(t, withKeyB.buildNonInteractiveArgs("uptime"))
+	if pathA == pathB {
+		t.Errorf("different IdentityFile must yield different ControlPath, both = %q", pathA)
+	}
+
+	// An identical connection must produce a stable path across calls.
+	pathA2 := controlPathArg(t, withKeyA.buildNonInteractiveArgs("whoami"))
+	if pathA != pathA2 {
+		t.Errorf("identical connection must yield identical ControlPath, %q != %q", pathA, pathA2)
+	}
+
+	// Arbitrary ssh_options (e.g. a different ProxyCommand) must also fork a
+	// distinct master, since %C ignores them entirely.
+	withProxyCmd := base
+	withProxyCmd.SSHOptions = []string{"-o", "ProxyCommand=nc %h %p"}
+	pathProxy := controlPathArg(t, withProxyCmd.buildNonInteractiveArgs("uptime"))
+	pathBase := controlPathArg(t, base.buildNonInteractiveArgs("uptime"))
+	if pathProxy == pathBase {
+		t.Errorf("differing SSHOptions must yield different ControlPath, both = %q", pathProxy)
+	}
+}
+
 // TestClassifyRunError checks that exit status 255 (ssh's transport-failure
 // sentinel) is rewritten into a human-readable "lost connection" error, while
 // any other non-zero exit (e.g. 127 = command not found) keeps the generic
@@ -380,4 +417,17 @@ func containsOption(args []string, flag, value string) bool {
 		}
 	}
 	return false
+}
+
+// controlPathArg returns the ControlPath value from an ssh argument list,
+// failing the test if no ControlPath option is present.
+func controlPathArg(t *testing.T, args []string) string {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-o" && strings.HasPrefix(args[i+1], "ControlPath=") {
+			return strings.TrimPrefix(args[i+1], "ControlPath=")
+		}
+	}
+	t.Fatalf("no ControlPath option in args: %v", args)
+	return ""
 }

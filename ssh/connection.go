@@ -3,7 +3,10 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -96,7 +99,7 @@ func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 		"-o", "ServerAliveCountMax=3",
 		"-o", "TCPKeepAlive=no",
 	)
-	args = appendControlMaster(args)
+	args = c.appendControlMaster(args)
 	return c.appendRemoteCmd(args, cmd)
 }
 
@@ -141,21 +144,49 @@ func (c *Connection) appendRemoteCmd(args []string, cmd string) []string {
 // them, a wedged master self-terminates and the next command transparently
 // spins up a fresh one.
 //
-// The socket lives in a tool-owned, 0700, absolute dir under ~/.ccc/cm. %C is a
-// short hash of (host, port, user, proxy) which keeps the socket path well under
-// the ~104-char unix-socket limit that the full connection tuple would blow. If
-// the home dir can't be resolved or the dir can't be created, multiplexing is
-// skipped gracefully — a missing optimization, not a hard failure.
-func appendControlMaster(args []string) []string {
+// The socket lives in a tool-owned, 0700, absolute dir under ~/.ccc/cm, named by
+// controlPathToken (a hash of the full effective connection) which keeps the
+// path well under the ~104-char unix-socket limit. If the home dir can't be
+// resolved or the dir can't be created, multiplexing is skipped gracefully — a
+// missing optimization, not a hard failure.
+func (c *Connection) appendControlMaster(args []string) []string {
 	dir, err := controlMasterDir()
 	if err != nil {
 		return args
 	}
 	return append(args,
 		"-o", "ControlMaster=auto",
-		"-o", "ControlPath="+filepath.Join(dir, "%C"),
+		"-o", "ControlPath="+filepath.Join(dir, c.controlPathToken()),
 		"-o", "ControlPersist=60",
 	)
+}
+
+// controlPathToken derives a unique, filesystem-safe socket name from every
+// connection-identifying field. OpenSSH's own %C token hashes only
+// local-host/remote-host/port/user (and jump host), NOT IdentityFile,
+// ProxyJump, or arbitrary SSHOptions such as ProxyCommand — verified with
+// `ssh -G`, two configs differing only in IdentityFile or ProxyCommand expand to
+// the same %C. Since ccc lets each host carry its own key and ssh_options, %C
+// would let a command silently multiplex over a master built for a *different*
+// auth/routing config, crossing a trust boundary. Hashing the full effective
+// Connection instead keeps each distinct config on its own master while the
+// 32-hex-char result stays comfortably under the unix-socket path limit.
+func (c *Connection) controlPathToken() string {
+	h := sha256.New()
+	// Length-prefix each field so distinct field boundaries can't collide
+	// (e.g. user "ab"+addr "c" must not hash the same as user "a"+addr "bc").
+	writeField := func(s string) {
+		fmt.Fprintf(h, "%d\x00%s", len(s), s)
+	}
+	writeField(c.User)
+	writeField(c.Address)
+	writeField(strconv.Itoa(c.Port))
+	writeField(c.IdentityFile)
+	writeField(c.ProxyJump)
+	for _, opt := range c.SSHOptions {
+		writeField(opt)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // controlMasterDir returns the absolute, 0700, tool-owned directory that holds
@@ -187,17 +218,24 @@ func (c *Connection) Run(cmd string) (string, error) {
 // ProxyJump hops and the remote "$SHELL -lc" child are reaped rather than left
 // hanging. It returns trimmed stdout on success.
 //
-// We deliberately read only stdout via .Output() and do NOT switch to
-// CombinedOutput: with ControlMaster the backgrounded master process keeps the
-// stderr pipe open, so draining stderr to EOF would block for the full
-// ControlPersist window instead of returning when the command finishes.
+// stderr is deliberately left nil so exec wires the child's fd 2 straight to
+// /dev/null (an *os.File, not a pipe). This is load-bearing with ControlPersist:
+// the backgrounded master inherits and holds the child's stderr open for the
+// whole persist window, so routing stderr through an os.Pipe — as Cmd.Output and
+// Cmd.CombinedOutput both do — would never reach EOF. Wait would then block until
+// WaitDelay (set in proc_unix.go) and return ErrWaitDelay, discarding valid
+// stdout and failing core flows (TestConnection/list/scan) even when the remote
+// command succeeded. The master does not hold stdout, so capturing it through a
+// buffer is safe and EOFs promptly when the command's channel closes.
 func (c *Connection) RunContext(ctx context.Context, cmd string) (string, error) {
 	args := c.buildNonInteractiveArgs(cmd)
 	proc := execCommandContext(ctx, "ssh", args...)
 	setProcAttrs(proc)
 
-	out, err := proc.Output()
-	if err != nil {
+	var stdout bytes.Buffer
+	proc.Stdout = &stdout
+
+	if err := proc.Run(); err != nil {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
 			return "", fmt.Errorf("connection timed out: %w", err)
@@ -207,7 +245,7 @@ func (c *Connection) RunContext(ctx context.Context, cmd string) (string, error)
 			return "", classifyRunError(err)
 		}
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // classifyRunError turns a failed ssh invocation into a human-readable error.
