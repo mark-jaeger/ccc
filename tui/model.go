@@ -100,39 +100,35 @@ const maxReconnectAttempts = 2
 // the retry loop from spinning tightly on a flapping connection.
 const reconnectBackoff = 750 * time.Millisecond
 
-// scanTimeout is a generous wall-clock backstop for a remote project scan.
-// Unlike connect/load, a scan is a long-running remote command (find over $HOME)
-// that can wedge on a stalled mount while the ssh transport stays alive, so its
-// keepalives never trip and esc would be the only escape. The cap is
-// deliberately large — a real scan over a slow link can take many seconds — so
-// it bounds a hang without aborting a legitimately slow scan; esc cancels
-// sooner.
+// requestTimeout is a generous wall-clock backstop for a connect/load operation.
+// It is deliberately large — large enough that a legitimately slow op over the
+// slow links this targets never trips it (a connect that walks several fallback
+// addresses, each with its own ConnectTimeout, completes well inside it) — yet
+// it still bounds an op that hangs *after* the transport is up: a remote
+// cat/zmx-list can wedge on stalled remote I/O while ssh keepalives keep ACKing,
+// and ssh's own bounds are not a hard guarantee (a user's ssh_options can weaken
+// ServerAlive/ConnectTimeout, since OpenSSH keeps the first value). esc cancels
+// sooner; this is the upper bound when the user waits.
+const requestTimeout = 60 * time.Second
+
+// scanTimeout is the same backstop for a remote project scan, which walks the
+// filesystem (find over $HOME) and so warrants more headroom than a point read.
 const scanTimeout = 90 * time.Second
 
 // beginRequest opens a new cancelable request epoch for a connect/load
 // operation. It cancels any still-in-flight request, bumps reqGen so a late
-// result from the previous op is recognised as stale, and returns a cancelable
-// context plus the new generation for the command to close over and tag its
-// result with. The cancel func is retained on the model so esc (cancelRequest)
-// or the next beginRequest can abort the operation.
-//
-// The context carries no fixed deadline on purpose. A single wall-clock cap
-// would false-abort a slow-but-progressing op over the slow links this targets —
-// e.g. a connect that walks several fallback addresses, each with its own
-// ConnectTimeout. A dead transport still self-aborts via ssh's own bounds
-// (ConnectTimeout for the handshake, ServerAlive keepalives for an established
-// link), and esc (cancelRequest) covers user-initiated abort. Caveat: a user who
-// overrides ServerAlive/ConnectTimeout via ssh_options can weaken the ssh bound,
-// leaving esc as the backstop; the one operation that can hang while the
-// transport stays alive — a scan — gets an explicit cap via beginScanRequest.
+// result from the previous op is recognised as stale, and returns a context
+// (bounded by requestTimeout) plus the new generation for the command to close
+// over and tag its result with. The cancel func is retained on the model so esc
+// (cancelRequest) or the next beginRequest can abort the operation.
 func (m *Model) beginRequest() (context.Context, int) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	return m.installRequest(ctx, cancel)
 }
 
-// beginScanRequest is beginRequest with a generous wall-clock backstop for the
-// one operation that can hang while the transport stays alive: a remote project
-// scan. See scanTimeout.
+// beginScanRequest is beginRequest with the larger scanTimeout backstop for a
+// remote project scan — the long-running filesystem walk that most warrants
+// headroom while still self-aborting if it wedges on a stalled mount.
 func (m *Model) beginScanRequest() (context.Context, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	return m.installRequest(ctx, cancel)
@@ -390,6 +386,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.attachLastSessionCmd()
 
 	case sessionKilledMsg:
+		// Drop a kill that completed after the user left the session screen (esc
+		// bumped the epoch). Reloading now would reload the wrong project, yank the
+		// user back to the session list, or — once leave-host has nil'd the runner —
+		// dial a nil Runner and panic. The nil-runner guard is belt-and-suspenders
+		// in case some navigation path leaves the epoch unbumped.
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
+		if !m.isLocal && m.runner == nil {
+			return m, nil
+		}
 		// Refresh sessions after kill, through a fresh cancelable request epoch.
 		ctx, gen := m.beginRequest()
 		if m.isLocal {
@@ -657,9 +664,9 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
 				if m.isLocal {
-					return m, killSessionLocalCmd(session.Name)
+					return m, killSessionLocalCmd(m.reqGen, session.Name)
 				}
-				return m, killSessionCmd(m.runner, session.Name)
+				return m, killSessionCmd(m.reqGen, m.runner, session.Name)
 			}
 		}
 	}
@@ -749,6 +756,11 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		m.state = StateSessionSelect
 		return m, nil
 	case StateSessionSelect:
+		// Leaving the session screen invalidates anything still tied to it: bump
+		// the epoch (and cancel any in-flight session load) so a delayed
+		// load/kill completion for this project is dropped instead of yanking the
+		// user back here or reloading the wrong project.
+		m.cancelRequest()
 		m.state = StateProjectSelect
 		m.selectedProject = ""
 		m.currentProjectKey = ""

@@ -800,17 +800,22 @@ func TestReconnectProbeStaleIgnored(t *testing.T) {
 // TestEscCancelsConnecting verifies that esc on the connecting screen cancels the
 // in-flight connect (so a dead network unblocks instead of hanging), bumps the
 // request generation, and returns to a usable host-selection screen.
-// TestBeginRequestHasNoFixedDeadline pins the deliberate design choice that a
-// cancelable request carries no wall-clock deadline. A fixed cap would falsely
-// abort a legitimately slow op over the slow links this tool targets — a remote
-// project scan, or a connect that walks several fallback addresses each with its
-// own ConnectTimeout. The op is instead bounded by ssh's own timeouts and by esc
-// (cancelRequest). If anyone reintroduces context.WithTimeout here, this fails.
-func TestBeginRequestHasNoFixedDeadline(t *testing.T) {
+// TestBeginRequestHasGenerousDeadline pins the backstop on a connect/load
+// request: a wall-clock cap that bounds an op that hangs after the transport is
+// up (a remote read wedged on a stalled mount, with ssh keepalives still ACKing
+// or weakened by user ssh_options), while being large enough never to abort a
+// legitimately slow op. The deadline must be present and approximately
+// requestTimeout out — a tight value here would regress to the original
+// false-abort bug.
+func TestBeginRequestHasGenerousDeadline(t *testing.T) {
 	m := New(false)
 	ctx, gen := m.beginRequest()
-	if _, ok := ctx.Deadline(); ok {
-		t.Error("beginRequest context must have no fixed deadline (ssh timeouts + esc bound it)")
+	dl, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("beginRequest context must carry a wall-clock backstop")
+	}
+	if remaining := time.Until(dl); remaining <= 30*time.Second || remaining > requestTimeout+time.Second {
+		t.Errorf("connect/load deadline should be ~%v out (generous, not tight), got %v", requestTimeout, remaining)
 	}
 	if gen != 1 {
 		t.Errorf("first request generation should be 1, got %d", gen)
@@ -1098,9 +1103,8 @@ func TestSaveProjectsCmdTagsResultWithGen(t *testing.T) {
 	}
 }
 
-// TestBeginScanRequestHasDeadline pins the deliberate split: a scan — the one
-// operation that can hang while the ssh transport stays alive — gets a generous
-// wall-clock backstop, whereas beginRequest (connect/load) does not.
+// TestBeginScanRequestHasDeadline pins the larger backstop for a scan — the
+// long-running filesystem walk that warrants more headroom than a point read.
 func TestBeginScanRequestHasDeadline(t *testing.T) {
 	m := New(false)
 	ctx, gen := m.beginScanRequest()
@@ -1108,10 +1112,100 @@ func TestBeginScanRequestHasDeadline(t *testing.T) {
 	if !ok {
 		t.Fatal("beginScanRequest context must carry a deadline backstop")
 	}
-	if remaining := time.Until(dl); remaining <= 0 || remaining > scanTimeout+time.Second {
-		t.Errorf("scan deadline should be ~%v out, got %v", scanTimeout, remaining)
+	if remaining := time.Until(dl); remaining <= requestTimeout || remaining > scanTimeout+time.Second {
+		t.Errorf("scan deadline should be ~%v out (larger than the connect/load %v), got %v", scanTimeout, requestTimeout, remaining)
 	}
 	if gen != 1 {
 		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+}
+
+// TestStaleSessionKilledIgnored verifies a kill that completes after the user
+// left the session screen (epoch bumped) does not start a session reload.
+func TestStaleSessionKilledIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = fakeRunner{}
+	m.currentProjectKey = "proj"
+	m.reqGen = 5
+	m.state = StateSessionSelect
+
+	_, cmd := m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 4})
+	if cmd != nil {
+		t.Error("stale sessionKilledMsg must not trigger a session reload")
+	}
+
+	// A current-gen kill should reload.
+	_, cmd = m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 5})
+	if cmd == nil {
+		t.Error("current-gen sessionKilledMsg should reload sessions")
+	}
+}
+
+// TestSessionKilledNilRunnerDropped guards the crash codex flagged: a kill that
+// lands once leave-host has nil'd the runner must not dial a nil Runner. Even
+// with the epoch unbumped (gen still current), the nil-runner guard drops it.
+func TestSessionKilledNilRunnerDropped(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = nil // navigated back to host select
+	m.reqGen = 7
+	m.state = StateHostSelect
+
+	_, cmd := m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 7})
+	if cmd != nil {
+		t.Error("sessionKilledMsg with a nil runner must not start a reload (would panic on a nil Runner)")
+	}
+}
+
+// TestLeavingSessionScreenBumpsEpoch verifies backing out of the session list
+// bumps the request epoch so a pending kill/load completion is invalidated.
+func TestLeavingSessionScreenBumpsEpoch(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = fakeRunner{}
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/proj"
+	m.SetSessions([]zmx.Session{{Name: "ccc.proj.main"}}, "proj")
+	m.state = StateSessionSelect
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateProjectSelect {
+		t.Fatalf("esc from session select should go to project select, got %v", m.state)
+	}
+	if m.reqGen == prevGen {
+		t.Error("leaving the session screen must bump the epoch to invalidate a pending kill/load")
+	}
+}
+
+// TestSaveProjectsCmdSnapshotsConfig verifies the save serializes a snapshot
+// taken at schedule time, not the live config the UI thread keeps mutating —
+// closing the data race of handing a shared *config.ProjectsConfig to a
+// background goroutine.
+func TestSaveProjectsCmdSnapshotsConfig(t *testing.T) {
+	projects := &config.ProjectsConfig{Projects: []config.Project{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}}}
+
+	cmd := saveProjectsCmd(3, fakeRunner{}, projects)
+	// Mutate the original after scheduling, as a concurrent reorder/scan would.
+	projects.Projects[0], projects.Projects[1] = projects.Projects[1], projects.Projects[0]
+	projects.Projects = append(projects.Projects, config.Project{Name: "c", Path: "/c"})
+
+	msg := cmd()
+	pl, ok := msg.(projectsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected projectsLoadedMsg, got %T", msg)
+	}
+	if len(pl.projects.Projects) != 2 {
+		t.Fatalf("snapshot should hold the 2 projects present at schedule time, got %d", len(pl.projects.Projects))
+	}
+	if pl.projects.Projects[0].Name != "a" || pl.projects.Projects[1].Name != "b" {
+		t.Errorf("snapshot order should be [a b] as scheduled, got [%s %s]",
+			pl.projects.Projects[0].Name, pl.projects.Projects[1].Name)
+	}
+	if pl.projects == projects {
+		t.Error("reload must carry the detached snapshot, not the live pointer")
 	}
 }

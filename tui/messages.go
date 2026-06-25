@@ -66,9 +66,13 @@ type sessionCreatedMsg struct {
 	name string
 }
 
-// sessionKilledMsg is sent when a session is killed.
+// sessionKilledMsg is sent when a session is killed. gen ties the kill to the
+// request epoch it was issued in so a kill that completes after the user has
+// left the session screen (or the host) is recognised as stale and does not
+// trigger a reload against a now-nil runner or the wrong host's context.
 type sessionKilledMsg struct {
 	name string
+	gen  int
 }
 
 // scanCompleteMsg is sent when project scanning completes. gen ties the result

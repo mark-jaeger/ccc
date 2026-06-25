@@ -251,24 +251,27 @@ func createSessionWithNameLocalCmd(name, projectPath string) tea.Cmd {
 	})
 }
 
-// killSessionCmd kills a zmx session.
-func killSessionCmd(runner Runner, sessionName string) tea.Cmd {
+// killSessionCmd kills a zmx session. gen tags the completion (and any error) so
+// a kill that lands after the user navigated away is dropped by the stale guard
+// instead of reloading sessions against a stale/nil runner.
+func killSessionCmd(gen int, runner Runner, sessionName string) tea.Cmd {
 	return func() tea.Msg {
 		if _, err := runner.Run(zmx.BuildKillCommand(sessionName)); err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
-		return sessionKilledMsg{name: sessionName}
+		return sessionKilledMsg{name: sessionName, gen: gen}
 	}
 }
 
-// killSessionLocalCmd kills a zmx session in local mode.
-func killSessionLocalCmd(sessionName string) tea.Cmd {
+// killSessionLocalCmd kills a zmx session in local mode. gen tags the completion
+// for the same stale guard as the remote path.
+func killSessionLocalCmd(gen int, sessionName string) tea.Cmd {
 	return func() tea.Msg {
 		cmd := exec.Command("sh", "-c", zmx.BuildKillCommand(sessionName))
 		if err := cmd.Run(); err != nil {
-			return errMsg{err: err}
+			return errMsg{err: err, gen: gen}
 		}
-		return sessionKilledMsg{name: sessionName}
+		return sessionKilledMsg{name: sessionName, gen: gen}
 	}
 }
 
@@ -326,14 +329,32 @@ func scanProjectsLocalCmd(gen int) tea.Cmd {
 	}
 }
 
+// cloneProjectsConfig returns a deep copy of a projects config. config.Project
+// is all value fields, so copying the slice fully detaches the result from the
+// original's backing array.
+func cloneProjectsConfig(projects *config.ProjectsConfig) *config.ProjectsConfig {
+	if projects == nil {
+		return nil
+	}
+	return &config.ProjectsConfig{
+		Projects: append([]config.Project(nil), projects.Projects...),
+	}
+}
+
 // saveProjectsCmd saves projects config to remote. gen tags the reload (and any
 // error) with the request epoch in effect when the save was triggered. The save
 // uses the blocking Run, so on a flaky link it can land long after the user has
 // moved on; tagging lets the model drop a late reload that would otherwise
 // clobber the current screen with the old host's projects (see isStaleReq).
+//
+// The config is snapshotted synchronously, before the command goroutine starts:
+// the caller hands in the live m.projects, which the UI thread can mutate (a
+// later reorder/delete/scan) while this goroutine serializes it. Serializing a
+// private copy removes that data race.
 func saveProjectsCmd(gen int, runner Runner, projects *config.ProjectsConfig) tea.Cmd {
+	snapshot := cloneProjectsConfig(projects)
 	return func() tea.Msg {
-		toml, err := config.SerializeProjectsConfig(projects)
+		toml, err := config.SerializeProjectsConfig(snapshot)
 		if err != nil {
 			return errMsg{err: err, gen: gen}
 		}
@@ -341,19 +362,21 @@ func saveProjectsCmd(gen int, runner Runner, projects *config.ProjectsConfig) te
 		if _, err := runner.Run(cmd); err != nil {
 			return errMsg{err: err, gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects, gen: gen}
+		return projectsLoadedMsg{projects: snapshot, gen: gen}
 	}
 }
 
 // saveProjectsLocalCmd saves projects config locally. gen tags the reload for
-// the same stale-result guard as the remote path, keeping the two symmetric.
+// the same stale-result guard as the remote path, and the config is snapshotted
+// for the same data-race reason as saveProjectsCmd, keeping the two symmetric.
 func saveProjectsLocalCmd(gen int, projects *config.ProjectsConfig) tea.Cmd {
+	snapshot := cloneProjectsConfig(projects)
 	return func() tea.Msg {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return errMsg{err: err, gen: gen}
 		}
-		toml, err := config.SerializeProjectsConfig(projects)
+		toml, err := config.SerializeProjectsConfig(snapshot)
 		if err != nil {
 			return errMsg{err: err, gen: gen}
 		}
@@ -364,7 +387,7 @@ func saveProjectsLocalCmd(gen int, projects *config.ProjectsConfig) tea.Cmd {
 		if err := os.WriteFile(dir+"/projects.toml", toml, 0600); err != nil {
 			return errMsg{err: err, gen: gen}
 		}
-		return projectsLoadedMsg{projects: projects, gen: gen}
+		return projectsLoadedMsg{projects: snapshot, gen: gen}
 	}
 }
 
