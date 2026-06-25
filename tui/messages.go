@@ -32,6 +32,25 @@ type sessionExitedMsg struct {
 	err error
 }
 
+// reconnectMsg is sent after the auto-reattach backoff elapses, signalling the
+// model to re-fire the interactive attach for lastSession. gen identifies the
+// reconnect epoch the tick was scheduled in; a tick whose gen no longer matches
+// the model (because the user canceled, navigated away, or started a fresh
+// attach) is stale and must be ignored rather than hijacking the terminal.
+type reconnectMsg struct {
+	gen int
+}
+
+// reconnectProbeMsg carries the result of a bounded, non-interactive
+// reachability check run before an automatic interactive reattach. It guards
+// against a still-down or auth-broken host seizing the terminal with a blocking
+// ssh prompt. gen ties the probe to its reconnect epoch so a stale result is
+// ignored.
+type reconnectProbeMsg struct {
+	gen int
+	ok  bool
+}
+
 // sessionCreatedMsg is sent when a new session is created.
 type sessionCreatedMsg struct {
 	name string

@@ -12,6 +12,8 @@ const (
 	StateSessionNameInput
 	StateCreatingSession
 	StateConnecting
+	StateReconnecting
+	StateConnectionLost
 	StateError
 	StateHelp
 )
@@ -33,6 +35,10 @@ func (s State) String() string {
 		return "CreatingSession"
 	case StateConnecting:
 		return "Connecting"
+	case StateReconnecting:
+		return "Reconnecting"
+	case StateConnectionLost:
+		return "ConnectionLost"
 	case StateError:
 		return "Error"
 	case StateHelp:

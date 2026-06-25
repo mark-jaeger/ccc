@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -50,8 +53,8 @@ type Model struct {
 	prevState State // state before showing help
 
 	// Connection state
-	runner      Runner            // current Runner (SSH or local)
-	currentHost *config.Host      // selected host (nil in local mode)
+	runner      Runner       // current Runner (SSH or local)
+	currentHost *config.Host // selected host (nil in local mode)
 	hosts       []config.Host
 	projects    *config.ProjectsConfig
 	sessions    []zmx.Session
@@ -59,7 +62,30 @@ type Model struct {
 	// Project state for session operations
 	currentProjectKey  string
 	currentProjectPath string
+
+	// Reconnect state for interactive-attach transport failures (exit 255).
+	// lastSession is the name of the most recently attached session, so a
+	// dropped connection can be re-fired. lastProjectPath is that session's
+	// project directory, captured so a reconnect that has to (re)create a
+	// never-established session does so in the right cwd rather than the login
+	// dir. reconnectAttempts bounds the automatic retry loop. reconnectGen
+	// identifies the current reconnect epoch: it is bumped whenever the attempt
+	// budget is (re)set — i.e. on a fresh attach, a manual reconnect, or a
+	// cancel/navigation — so a backoff tick scheduled in a prior epoch is
+	// recognised as stale and ignored.
+	lastSession       string
+	lastProjectPath   string
+	reconnectAttempts int
+	reconnectGen      int
 }
+
+// maxReconnectAttempts bounds automatic re-attach attempts before the model
+// gives up and offers a manual reconnect prompt.
+const maxReconnectAttempts = 2
+
+// reconnectBackoff is the delay between automatic re-attach attempts. It keeps
+// the retry loop from spinning tightly on a flapping connection.
+const reconnectBackoff = 750 * time.Millisecond
 
 // New creates a new TUI model.
 func New(isLocal bool) Model {
@@ -184,24 +210,82 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionCreatedMsg:
-		// After creating, attach to the new session
+		// After creating, attach to the new session. Track it (and its project
+		// dir) so a dropped connection can be re-fired, and open a fresh epoch.
+		m.lastSession = msg.name
+		m.lastProjectPath = m.currentProjectPath
+		m.reconnectAttempts = 0
+		m.reconnectGen++
 		if m.isLocal {
 			return m, attachSessionLocalCmd(msg.name)
 		}
 		return m, attachSessionCmd(*m.currentHost, msg.name)
 
 	case sessionExitedMsg:
-		// Returned from zmx attach, refresh sessions
-		// If zmx returned an error, display it
+		// Returned from zmx attach.
+		// A transport failure (ssh exits 255) means the connection dropped, not
+		// that zmx itself errored. Offer a bounded, cancellable auto-reattach
+		// instead of dumping the user into a dead-end error screen.
+		if isTransportFailure(msg.err) {
+			if m.reconnectAttempts < maxReconnectAttempts {
+				m.reconnectAttempts++
+				m.state = StateReconnecting
+				// Capture the current epoch so a cancel/navigation that bumps
+				// reconnectGen before this tick fires makes the tick stale.
+				gen := m.reconnectGen
+				return m, tea.Tick(reconnectBackoff, func(time.Time) tea.Msg {
+					return reconnectMsg{gen: gen}
+				})
+			}
+			// Exhausted automatic attempts: hand off to manual recovery.
+			m.state = StateConnectionLost
+			return m, nil
+		}
+		// Any other error is a genuine failure: display it.
 		if msg.err != nil {
 			m.err = msg.err
 			m.state = StateError
 			return m, nil
 		}
+		// Clean exit: reset the retry counter and refresh sessions. Bump the
+		// epoch so any tick still in flight from a prior drop is ignored.
+		m.reconnectAttempts = 0
+		m.reconnectGen++
 		if m.isLocal {
 			return m, loadSessionsLocalCmd(m.currentProjectKey)
 		}
 		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+
+	case reconnectMsg:
+		// Backoff elapsed: re-fire the interactive attach for lastSession, but
+		// only if this tick belongs to the current epoch and we are still
+		// reconnecting. Otherwise the user canceled or navigated away, and
+		// firing the attach would unexpectedly seize the terminal.
+		if msg.gen != m.reconnectGen || m.state != StateReconnecting {
+			return m, nil
+		}
+		// Local attaches run over a pipe and cannot block on an ssh prompt, so
+		// fire directly. For remote, first probe reachability non-interactively
+		// (bounded, BatchMode, no prompt) so an automatic interactive attach
+		// never seizes the terminal waiting on a password prompt or a long TCP
+		// connect against a host that is still down.
+		if m.isLocal {
+			return m, m.attachLastSessionCmd()
+		}
+		return m, m.reconnectProbeCmd()
+
+	case reconnectProbeMsg:
+		// Only act on a probe from the current epoch while still reconnecting.
+		if msg.gen != m.reconnectGen || m.state != StateReconnecting {
+			return m, nil
+		}
+		if !msg.ok {
+			// Host still unreachable (or auth broken): hand off to manual
+			// recovery instead of launching a blocking interactive ssh.
+			m.state = StateConnectionLost
+			return m, nil
+		}
+		return m, m.attachLastSessionCmd()
 
 	case sessionKilledMsg:
 		// Refresh sessions after kill
@@ -277,9 +361,26 @@ func (m Model) updateState(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSessionSelect(msg)
 	case StateSessionNameInput:
 		return m.updateSessionNameInput(msg)
+	case StateConnectionLost:
+		return m.updateConnectionLost(msg)
 	default:
 		return m, nil
 	}
+}
+
+// updateConnectionLost handles the manual-recovery screen shown after automatic
+// reattach attempts are exhausted. [r] re-initiates the attach (resetting the
+// attempt counter); [esc] is handled upstream in handleBack().
+func (m Model) updateConnectionLost(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if key.Matches(keyMsg, m.keys.Reconnect) {
+			m.reconnectAttempts = 0
+			m.reconnectGen++
+			m.state = StateReconnecting
+			return m, m.attachLastSessionCmd()
+		}
+	}
+	return m, nil
 }
 
 // updateHostSelect handles updates when in host selection state.
@@ -415,6 +516,14 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(keyMsg, m.keys.Select):
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
+				// Fresh, user-initiated attach: remember the target (and its
+				// project dir) and reset the reconnect counter so a later drop
+				// gets a full retry budget. Open a new epoch so any stale tick
+				// from a prior attach is dropped.
+				m.lastSession = session.Name
+				m.lastProjectPath = m.currentProjectPath
+				m.reconnectAttempts = 0
+				m.reconnectGen++
 				if m.isLocal {
 					return m, attachSessionLocalCmd(session.Name)
 				}
@@ -485,7 +594,16 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Create the session
+			// Create the session. The create command attaches directly and
+			// reports its outcome via sessionExitedMsg, so track the new session
+			// as the reconnect target now and open a fresh epoch; otherwise a
+			// transport drop (exit 255) on the first attach would re-fire against
+			// a stale or empty lastSession. Capture the project dir too so a
+			// reconnect that has to recreate the session uses the right cwd.
+			m.lastSession = name
+			m.lastProjectPath = m.currentProjectPath
+			m.reconnectAttempts = 0
+			m.reconnectGen++
 			m.state = StateCreatingSession
 			m.sessionNameInputErr = ""
 			if m.isLocal {
@@ -527,8 +645,96 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		m.runner = nil
 	case StateHostSelect:
 		return m, tea.Quit
+	case StateReconnecting, StateConnectionLost:
+		// Cancel reconnection and return to the session list. Bump the epoch so
+		// a backoff tick already scheduled cannot re-fire the attach.
+		m.reconnectAttempts = 0
+		m.reconnectGen++
+		m.state = StateSessionSelect
+		return m, nil
+	case StateError:
+		// Recover from the dead-end error screen: clear the error and return to
+		// the first usable screen for the current mode. The error may have fired
+		// before that screen's list was ever built (e.g. a startup host- or
+		// project-load failure), so (re)initialize the list from whatever data we
+		// have rather than entering a zero-value list.Model — its nil delegate
+		// would panic on the next update or render.
+		m.err = nil
+		m.reconnectAttempts = 0
+		m.reconnectGen++
+		m.ensureMinDimensions()
+		if m.isLocal {
+			var projects []config.Project
+			if m.projects != nil {
+				projects = m.projects.Projects
+			}
+			m.SetProjects(projects)
+			m.state = StateProjectSelect
+		} else {
+			m.SetHosts(m.hosts) // also sets state = StateHostSelect
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// isTransportFailure reports whether err is an ssh transport failure, signalled
+// by exit code 255. Such failures mean the connection dropped rather than zmx
+// itself erroring, so they warrant a reconnect rather than a fatal error.
+func isTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && ee.ExitCode() == 255
+}
+
+// reconnectProbeCmd runs a bounded, non-interactive reachability check against
+// the current host before an automatic interactive reattach. It uses the
+// runner's non-interactive path (BatchMode + ConnectTimeout), so it fails fast
+// and never prompts — unlike the interactive attach it guards, which allocates
+// a PTY and can block indefinitely on a password prompt. The reconnect epoch is
+// captured so a result that arrives after a cancel/navigation is discarded.
+func (m Model) reconnectProbeCmd() tea.Cmd {
+	runner := m.runner
+	gen := m.reconnectGen
+	return func() tea.Msg {
+		if runner == nil {
+			return reconnectProbeMsg{gen: gen, ok: false}
+		}
+		_, err := runner.Run("true")
+		return reconnectProbeMsg{gen: gen, ok: err == nil}
+	}
+}
+
+// attachLastSessionCmd re-fires the interactive attach for the last-attached
+// session, using the appropriate transport for the current mode.
+//
+// When the session's project directory is known it reconnects through the
+// project-aware create command (cd <dir> && zmx attach). zmx attach reattaches
+// to an existing session (the common dropped-connection case, where the cd is a
+// harmless no-op) but creates a missing one in the current directory — so if the
+// transport dropped before the initial create ever established the session, this
+// recreates it in its project directory rather than the login/default dir. With
+// no known directory it falls back to a plain attach (a bare `cd ''` would
+// otherwise abort the command).
+func (m Model) attachLastSessionCmd() tea.Cmd {
+	if m.lastProjectPath == "" {
+		if m.isLocal {
+			return attachSessionLocalCmd(m.lastSession)
+		}
+		if m.currentHost == nil {
+			return nil
+		}
+		return attachSessionCmd(*m.currentHost, m.lastSession)
+	}
+	if m.isLocal {
+		return createSessionWithNameLocalCmd(m.lastSession, m.lastProjectPath)
+	}
+	if m.currentHost == nil {
+		return nil
+	}
+	return createSessionWithNameCmd(*m.currentHost, m.lastSession, m.lastProjectPath)
 }
 
 // ensureMinDimensions sets default dimensions if WindowSizeMsg hasn't arrived yet.
@@ -560,7 +766,9 @@ func (m Model) View() string {
 		return m.helpView()
 	}
 
-	if m.err != nil {
+	// Render a bare error only outside StateError; the StateError branch below
+	// renders the same error plus a recovery hint, so let the switch handle it.
+	if m.err != nil && m.state != StateError {
 		return ErrorStyle.Render("Error: " + m.err.Error())
 	}
 
@@ -580,13 +788,28 @@ func (m Model) View() string {
 		return pad + m.sessionNameInputView()
 	case StateConnecting:
 		return pad + m.spinner.View() + " Connecting..."
+	case StateReconnecting:
+		hint := dimStyle.Render("[esc] cancel")
+		return pad + m.spinner.View() + " Connection lost — reattaching…\n\n" + hint
+	case StateConnectionLost:
+		hint := dimStyle.Render("[r] reconnect   [esc] back   [q] quit")
+		return pad + ErrorStyle.Render("Connection lost.") + "\n\n" + hint
 	case StateError:
-		return pad + ErrorStyle.Render("Error: " + m.err.Error())
+		hint := dimStyle.Render("[esc] back   [q] quit")
+		msg := ""
+		if m.err != nil {
+			msg = m.err.Error()
+		}
+		return pad + ErrorStyle.Render("Error: "+msg) + "\n\n" + hint
 	case StateHelp:
 		return m.helpView()
 	}
 	return ""
 }
+
+// dimStyle renders hint text in a muted color, matching the session-name-input
+// view's footer styling.
+var dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 // sessionNameInputView renders the session name input screen.
 func (m Model) sessionNameInputView() string {
@@ -599,7 +822,7 @@ func (m Model) sessionNameInputView() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.sessionNameInputErr))
 	}
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("[Enter] Create  [Esc] Cancel"))
+	b.WriteString(dimStyle.Render("[Enter] Create  [Esc] Cancel"))
 	return b.String()
 }
 
@@ -669,6 +892,14 @@ Session Screen:
 
 Inside zmx session:
   Ctrl+\    Detach (return to ccc)
+
+Connection lost:
+  (auto-reattach on a dropped session)
+  r         Reconnect now
+  Esc       Back to session list
+
+Error screen:
+  Esc       Back   q  Quit
 
 Press ? to close this help.
 `

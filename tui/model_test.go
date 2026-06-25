@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -9,6 +11,18 @@ import (
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/zmx"
 )
+
+// exitError255 returns a real *exec.ExitError with code 255, used to simulate
+// an ssh transport failure on interactive attach.
+func exitError255(t *testing.T) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit 255").Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 255 {
+		t.Fatalf("failed to construct exit-255 error, got %v", err)
+	}
+	return err
+}
 
 func TestNewModel(t *testing.T) {
 	t.Run("remote mode", func(t *testing.T) {
@@ -407,5 +421,365 @@ func TestReorderProjectNilSafe(t *testing.T) {
 
 	if cmd != nil {
 		t.Error("expected nil command when projects is nil")
+	}
+}
+
+// TestErrorRecovery verifies that pressing esc in StateError clears the error
+// and returns to the first usable screen (1B).
+func TestErrorRecovery(t *testing.T) {
+	tests := []struct {
+		name     string
+		isLocal  bool
+		expected State
+	}{
+		{"remote returns to host select", false, StateHostSelect},
+		{"local returns to project select", true, StateProjectSelect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.isLocal)
+			m.state = StateError
+			m.err = fmt.Errorf("boom")
+
+			newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+			m = newModel.(Model)
+
+			if m.state != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, m.state)
+			}
+			if m.err != nil {
+				t.Errorf("expected err cleared, got %v", m.err)
+			}
+		})
+	}
+}
+
+// TestSessionExited255Reconnects verifies a 255 exit moves to StateReconnecting
+// and increments the attempt counter rather than dumping to StateError (3A).
+func TestSessionExited255Reconnects(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	newModel, cmd := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = newModel.(Model)
+
+	if m.state != StateReconnecting {
+		t.Errorf("expected StateReconnecting, got %v", m.state)
+	}
+	if m.reconnectAttempts != 1 {
+		t.Errorf("expected reconnectAttempts=1, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a backoff tick command")
+	}
+}
+
+// TestReconnectCancelAndExhaust verifies the bounded-reconnect lifecycle:
+// reaching the cap transitions to StateConnectionLost, where r re-initiates an
+// attach and esc returns to the session list (3A).
+func TestReconnectCancelAndExhaust(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	// First 255 exit -> reconnecting (attempt 1)
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting || m.reconnectAttempts != 1 {
+		t.Fatalf("after 1st exit: state=%v attempts=%d", m.state, m.reconnectAttempts)
+	}
+
+	// Second 255 exit -> reconnecting (attempt 2)
+	nm, _ = m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting || m.reconnectAttempts != 2 {
+		t.Fatalf("after 2nd exit: state=%v attempts=%d", m.state, m.reconnectAttempts)
+	}
+
+	// Third 255 exit -> cap exceeded -> connection lost
+	nm, _ = m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateConnectionLost {
+		t.Fatalf("after cap exceeded: expected StateConnectionLost, got %v", m.state)
+	}
+
+	// Press r -> re-initiate attach (resets attempts, returns a cmd)
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	rm := nm.(Model)
+	if cmd == nil {
+		t.Error("expected attach cmd on reconnect")
+	}
+	if rm.reconnectAttempts != 0 {
+		t.Errorf("expected attempts reset to 0 on manual reconnect, got %d", rm.reconnectAttempts)
+	}
+
+	// From the connection-lost screen, esc returns to the session list.
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	em := nm.(Model)
+	if em.state != StateSessionSelect {
+		t.Errorf("expected esc to return to StateSessionSelect, got %v", em.state)
+	}
+}
+
+// TestReconnectCanceledTickIgnored verifies that a backoff tick scheduled before
+// the user cancels (esc) is ignored once it finally fires, instead of seizing
+// the terminal with a re-attach.
+func TestReconnectCanceledTickIgnored(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	// Drop -> reconnecting; a backoff tick is scheduled for this epoch.
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+	staleGen := m.reconnectGen
+
+	// User cancels with esc before the tick fires.
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+	if m.state != StateSessionSelect {
+		t.Fatalf("expected esc to return to StateSessionSelect, got %v", m.state)
+	}
+
+	// The previously scheduled tick now arrives; it must be ignored.
+	nm, cmd := m.Update(reconnectMsg{gen: staleGen})
+	m = nm.(Model)
+	if cmd != nil {
+		t.Error("expected canceled reconnect tick to be ignored (nil cmd)")
+	}
+	if m.state != StateSessionSelect {
+		t.Errorf("expected to remain in StateSessionSelect, got %v", m.state)
+	}
+}
+
+// TestReconnectTickFires verifies that an in-epoch tick delivered while still
+// reconnecting does re-fire the attach.
+func TestReconnectTickFires(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+
+	nm, cmd := m.Update(reconnectMsg{gen: m.reconnectGen})
+	m = nm.(Model)
+	if cmd == nil {
+		t.Error("expected matching in-epoch reconnect tick to fire an attach cmd")
+	}
+}
+
+// TestCreateSessionTracksLastSession verifies the create-and-attach path records
+// the new session as the reconnect target (and resets the attempt budget), so a
+// transport drop on the first attach retries the right session rather than a
+// stale one.
+func TestCreateSessionTracksLastSession(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionNameInput
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/home/user/proj"
+	// Simulate stale reconnect context from a prior attach.
+	m.lastSession = "ccc.other.stale"
+	m.reconnectAttempts = 1
+
+	m.sessionNameInput.SetValue("dev")
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+
+	if m.state != StateCreatingSession {
+		t.Fatalf("expected StateCreatingSession, got %v", m.state)
+	}
+	if m.lastSession != "ccc.proj.dev" {
+		t.Errorf("expected lastSession=ccc.proj.dev, got %q", m.lastSession)
+	}
+	if m.lastProjectPath != "/home/user/proj" {
+		t.Errorf("expected lastProjectPath captured for reconnect, got %q", m.lastProjectPath)
+	}
+	if m.reconnectAttempts != 0 {
+		t.Errorf("expected reconnectAttempts reset to 0, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a create-session command")
+	}
+}
+
+// TestCreateDropRetainsProjectPath verifies that when a freshly created
+// session's first attach drops with exit 255, the model enters reconnecting
+// with the project directory retained, so the reconnect can recreate the
+// session in the correct cwd instead of the login dir.
+func TestCreateDropRetainsProjectPath(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionNameInput
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/home/user/proj"
+
+	// Create the session via the name-input Enter path.
+	m.sessionNameInput.SetValue("dev")
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+
+	// The first attach drops before the session is established.
+	nm, cmd := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+	if m.lastSession != "ccc.proj.dev" {
+		t.Errorf("expected lastSession=ccc.proj.dev, got %q", m.lastSession)
+	}
+	if m.lastProjectPath != "/home/user/proj" {
+		t.Errorf("expected project dir retained for reconnect, got %q", m.lastProjectPath)
+	}
+	if cmd == nil {
+		t.Error("expected a backoff tick command")
+	}
+}
+
+// TestSessionExitedCleanResets verifies a clean exit refreshes sessions and
+// resets the reconnect counter (3A).
+func TestSessionExitedCleanResets(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateReconnecting
+	m.currentProjectKey = "proj"
+	m.reconnectAttempts = 2
+
+	newModel, cmd := m.Update(sessionExitedMsg{err: nil})
+	m = newModel.(Model)
+
+	if m.reconnectAttempts != 0 {
+		t.Errorf("expected reconnectAttempts reset to 0, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a session-refresh command")
+	}
+}
+
+// fakeRunner is a Runner stub for exercising remote-mode reconnect probes.
+type fakeRunner struct {
+	runErr error
+}
+
+func (f fakeRunner) Run(string) (string, error)  { return "", f.runErr }
+func (f fakeRunner) RunInteractive(string) error { return nil }
+
+// TestErrorRecoveryInitializesList verifies that recovering from StateError when
+// the destination list was never built (e.g. a startup load failure) lands on a
+// usable, non-panicking screen rather than a zero-value list.Model.
+func TestErrorRecoveryInitializesList(t *testing.T) {
+	tests := []struct {
+		name    string
+		isLocal bool
+		want    State
+	}{
+		{"remote", false, StateHostSelect},
+		{"local", true, StateProjectSelect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.isLocal)
+			m.state = StateError
+			m.err = fmt.Errorf("startup load failed")
+			// Lists are deliberately left at their zero value: the load failed
+			// before SetHosts/SetProjects ran.
+
+			nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+			m = nm.(Model)
+
+			if m.state != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, m.state)
+			}
+			// Rendering and a follow-up key update must not panic on an
+			// uninitialized list (nil delegate).
+			_ = m.View()
+			nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+			_ = nm.(Model).View()
+		})
+	}
+}
+
+// TestReconnectRemoteProbesBeforeAttach verifies that an in-epoch reconnect tick
+// in remote mode kicks off a non-interactive reachability probe rather than
+// firing the interactive attach directly.
+func TestReconnectRemoteProbesBeforeAttach(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	m.lastSession = "ccc.proj.main"
+
+	nm, cmd := m.Update(reconnectMsg{gen: m.reconnectGen})
+	m = nm.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a probe command before the interactive attach")
+	}
+	if m.state != StateReconnecting {
+		t.Errorf("expected to remain StateReconnecting during probe, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeUnreachable verifies that a failed reachability probe hands
+// off to manual recovery instead of launching a blocking interactive ssh.
+func TestReconnectProbeUnreachable(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{runErr: fmt.Errorf("ssh: connect to host failed")}
+	m.lastSession = "ccc.proj.main"
+
+	nm, _ := m.Update(reconnectProbeMsg{gen: m.reconnectGen, ok: false})
+	m = nm.(Model)
+
+	if m.state != StateConnectionLost {
+		t.Errorf("expected StateConnectionLost after failed probe, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeReachable verifies a successful probe proceeds to the
+// interactive attach while staying in StateReconnecting.
+func TestReconnectProbeReachable(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	m.lastSession = "ccc.proj.main"
+	m.currentHost = &config.Host{Name: "h", Address: "1.2.3.4"}
+
+	nm, cmd := m.Update(reconnectProbeMsg{gen: m.reconnectGen, ok: true})
+	m = nm.(Model)
+
+	if cmd == nil {
+		t.Error("expected an attach command after a successful probe")
+	}
+	if m.state != StateReconnecting {
+		t.Errorf("expected to remain StateReconnecting until attach, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeStaleIgnored verifies a probe result from a superseded epoch
+// (e.g. after the user canceled) is ignored.
+func TestReconnectProbeStaleIgnored(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	staleGen := m.reconnectGen
+	m.reconnectGen++ // a cancel/navigation bumped the epoch
+
+	nm, cmd := m.Update(reconnectProbeMsg{gen: staleGen, ok: true})
+	m = nm.(Model)
+
+	if cmd != nil {
+		t.Error("expected a stale probe result to be ignored (nil cmd)")
 	}
 }

@@ -4,21 +4,22 @@ import "github.com/charmbracelet/bubbles/key"
 
 // keyMap defines all keybindings for the TUI.
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Top      key.Binding
-	Bottom   key.Binding
-	Select   key.Binding
-	Back     key.Binding
-	Quit     key.Binding
-	Filter   key.Binding
-	Help     key.Binding
-	New      key.Binding
-	Kill     key.Binding
-	Scan     key.Binding
-	Delete   key.Binding
-	MoveUp   key.Binding
-	MoveDown key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Top       key.Binding
+	Bottom    key.Binding
+	Select    key.Binding
+	Back      key.Binding
+	Quit      key.Binding
+	Filter    key.Binding
+	Help      key.Binding
+	New       key.Binding
+	Kill      key.Binding
+	Scan      key.Binding
+	Delete    key.Binding
+	MoveUp    key.Binding
+	MoveDown  key.Binding
+	Reconnect key.Binding
 }
 
 // Keys returns the default vim-style keybindings.
@@ -83,6 +84,10 @@ func Keys() keyMap {
 		MoveDown: key.NewBinding(
 			key.WithKeys("ctrl+down"),
 			key.WithHelp("ctrl+↓", "move down"),
+		),
+		Reconnect: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "reconnect"),
 		),
 	}
 }
