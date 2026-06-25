@@ -46,6 +46,11 @@ func loadHostsCmd() tea.Cmd {
 	}
 }
 
+// connectionTester probes whether a candidate connection is reachable. It is a
+// package-level seam (defaulting to (*ssh.Connection).TestConnection) so
+// connectHostCmd's fallback wiring can be unit-tested without real SSH.
+var connectionTester = func(c *ssh.Connection) error { return c.TestConnection() }
+
 // connectHostCmd establishes an SSH connection to a host, trying the primary
 // address first and then each entry in host.FallbackAddresses in order. This
 // mirrors the non-TUI flow (flow.tryFallbackAddresses) so the live TUI can
@@ -53,12 +58,17 @@ func loadHostsCmd() tea.Cmd {
 // roams between Wi-Fi, LTE, and Tailscale and the host's IP changes).
 func connectHostCmd(name string, host config.Host) tea.Cmd {
 	return func() tea.Msg {
-		conn, err := selectWorkingConnection(host, func(c *ssh.Connection) error {
-			return c.TestConnection()
-		})
+		conn, err := selectWorkingConnection(host, connectionTester)
 		if err != nil {
 			return errMsg{err}
 		}
+		// selectWorkingConnection may have fallen back to one of
+		// host.FallbackAddresses. Record the address that actually worked on the
+		// host handed to the model: later attach/create commands rebuild an
+		// ssh.Connection from currentHost (= this host), so they must target the
+		// same reachable address as runner rather than the dead primary. host is
+		// a value copy, so this mutation stays local to the command.
+		host.Address = conn.Address
 		return hostConnectedMsg{
 			hostName: name,
 			host:     host,

@@ -104,3 +104,79 @@ func TestSelectWorkingConnection(t *testing.T) {
 		}
 	})
 }
+
+// TestConnectHostCmd covers the wiring around selectWorkingConnection: when a
+// fallback is selected, the address that worked must reach the model on BOTH the
+// runner and the emitted host. The model rebuilds attach/create connections from
+// currentHost (= this host), so a stale primary address there would make session
+// attach/create dial the dead primary even though probing succeeded over the
+// fallback. The connectionTester seam lets us exercise this without real SSH.
+func TestConnectHostCmd(t *testing.T) {
+	orig := connectionTester
+	defer func() { connectionTester = orig }()
+
+	t.Run("selected fallback address propagates to host and runner", func(t *testing.T) {
+		var attempts []string
+		connectionTester = fakeTest("fallback1.example", &attempts)
+
+		host := config.Host{
+			User:              "me",
+			Address:           "primary.example",
+			FallbackAddresses: []string{"fallback1.example", "fallback2.example"},
+		}
+		msg := connectHostCmd("box", host)()
+
+		hc, ok := msg.(hostConnectedMsg)
+		if !ok {
+			t.Fatalf("expected hostConnectedMsg, got %T (%v)", msg, msg)
+		}
+		if hc.hostName != "box" {
+			t.Errorf("hostName = %q, want box", hc.hostName)
+		}
+		if hc.host.Address != "fallback1.example" {
+			t.Errorf("emitted host.Address = %q, want fallback1.example (attach/create rebuild from this)", hc.host.Address)
+		}
+		conn, ok := hc.runner.(*ssh.Connection)
+		if !ok {
+			t.Fatalf("runner is %T, want *ssh.Connection", hc.runner)
+		}
+		if conn.Address != "fallback1.example" {
+			t.Errorf("runner address = %q, want fallback1.example", conn.Address)
+		}
+	})
+
+	t.Run("primary works, host address unchanged", func(t *testing.T) {
+		var attempts []string
+		connectionTester = fakeTest("primary.example", &attempts)
+
+		host := config.Host{
+			User:              "me",
+			Address:           "primary.example",
+			FallbackAddresses: []string{"fallback1.example"},
+		}
+		msg := connectHostCmd("box", host)()
+
+		hc, ok := msg.(hostConnectedMsg)
+		if !ok {
+			t.Fatalf("expected hostConnectedMsg, got %T (%v)", msg, msg)
+		}
+		if hc.host.Address != "primary.example" {
+			t.Errorf("emitted host.Address = %q, want primary.example", hc.host.Address)
+		}
+	})
+
+	t.Run("all addresses fail yields errMsg", func(t *testing.T) {
+		var attempts []string
+		connectionTester = fakeTest("", &attempts)
+
+		host := config.Host{
+			User:              "me",
+			Address:           "primary.example",
+			FallbackAddresses: []string{"fallback1.example"},
+		}
+		msg := connectHostCmd("box", host)()
+		if _, ok := msg.(errMsg); !ok {
+			t.Fatalf("expected errMsg, got %T (%v)", msg, msg)
+		}
+	})
+}
