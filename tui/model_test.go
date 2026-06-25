@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -9,6 +11,18 @@ import (
 	"github.com/mark-jaeger/ccc/config"
 	"github.com/mark-jaeger/ccc/zmx"
 )
+
+// exitError255 returns a real *exec.ExitError with code 255, used to simulate
+// an ssh transport failure on interactive attach.
+func exitError255(t *testing.T) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit 255").Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 255 {
+		t.Fatalf("failed to construct exit-255 error, got %v", err)
+	}
+	return err
+}
 
 func TestNewModel(t *testing.T) {
 	t.Run("remote mode", func(t *testing.T) {
@@ -407,5 +421,125 @@ func TestReorderProjectNilSafe(t *testing.T) {
 
 	if cmd != nil {
 		t.Error("expected nil command when projects is nil")
+	}
+}
+
+// TestErrorRecovery verifies that pressing esc in StateError clears the error
+// and returns to the first usable screen (1B).
+func TestErrorRecovery(t *testing.T) {
+	tests := []struct {
+		name     string
+		isLocal  bool
+		expected State
+	}{
+		{"remote returns to host select", false, StateHostSelect},
+		{"local returns to project select", true, StateProjectSelect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.isLocal)
+			m.state = StateError
+			m.err = fmt.Errorf("boom")
+
+			newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+			m = newModel.(Model)
+
+			if m.state != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, m.state)
+			}
+			if m.err != nil {
+				t.Errorf("expected err cleared, got %v", m.err)
+			}
+		})
+	}
+}
+
+// TestSessionExited255Reconnects verifies a 255 exit moves to StateReconnecting
+// and increments the attempt counter rather than dumping to StateError (3A).
+func TestSessionExited255Reconnects(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	newModel, cmd := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = newModel.(Model)
+
+	if m.state != StateReconnecting {
+		t.Errorf("expected StateReconnecting, got %v", m.state)
+	}
+	if m.reconnectAttempts != 1 {
+		t.Errorf("expected reconnectAttempts=1, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a backoff tick command")
+	}
+}
+
+// TestReconnectCancelAndExhaust verifies the bounded-reconnect lifecycle:
+// reaching the cap transitions to StateConnectionLost, where r re-initiates an
+// attach and esc returns to the session list (3A).
+func TestReconnectCancelAndExhaust(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	// First 255 exit -> reconnecting (attempt 1)
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting || m.reconnectAttempts != 1 {
+		t.Fatalf("after 1st exit: state=%v attempts=%d", m.state, m.reconnectAttempts)
+	}
+
+	// Second 255 exit -> reconnecting (attempt 2)
+	nm, _ = m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting || m.reconnectAttempts != 2 {
+		t.Fatalf("after 2nd exit: state=%v attempts=%d", m.state, m.reconnectAttempts)
+	}
+
+	// Third 255 exit -> cap exceeded -> connection lost
+	nm, _ = m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateConnectionLost {
+		t.Fatalf("after cap exceeded: expected StateConnectionLost, got %v", m.state)
+	}
+
+	// Press r -> re-initiate attach (resets attempts, returns a cmd)
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	rm := nm.(Model)
+	if cmd == nil {
+		t.Error("expected attach cmd on reconnect")
+	}
+	if rm.reconnectAttempts != 0 {
+		t.Errorf("expected attempts reset to 0 on manual reconnect, got %d", rm.reconnectAttempts)
+	}
+
+	// From the connection-lost screen, esc returns to the session list.
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	em := nm.(Model)
+	if em.state != StateSessionSelect {
+		t.Errorf("expected esc to return to StateSessionSelect, got %v", em.state)
+	}
+}
+
+// TestSessionExitedCleanResets verifies a clean exit refreshes sessions and
+// resets the reconnect counter (3A).
+func TestSessionExitedCleanResets(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateReconnecting
+	m.currentProjectKey = "proj"
+	m.reconnectAttempts = 2
+
+	newModel, cmd := m.Update(sessionExitedMsg{err: nil})
+	m = newModel.(Model)
+
+	if m.reconnectAttempts != 0 {
+		t.Errorf("expected reconnectAttempts reset to 0, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a session-refresh command")
 	}
 }

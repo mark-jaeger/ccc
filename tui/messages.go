@@ -32,6 +32,10 @@ type sessionExitedMsg struct {
 	err error
 }
 
+// reconnectMsg is sent after the auto-reattach backoff elapses, signalling the
+// model to re-fire the interactive attach for lastSession.
+type reconnectMsg struct{}
+
 // sessionCreatedMsg is sent when a new session is created.
 type sessionCreatedMsg struct {
 	name string
