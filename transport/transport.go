@@ -82,18 +82,27 @@ func remoteShellArgv(remoteCmd string) []string {
 // sshBootstrap builds the `ssh ...` string mosh uses only to bootstrap the
 // connection (it carries port, identity, proxy jump, and any extra ssh options).
 // mosh then takes over with UDP; ssh is not used for the session itself.
+//
+// The value is a single string handed to `mosh --ssh=`. mosh re-splits it with
+// Perl's shellwords() (Text::ParseWords), which honors shell quoting, so each
+// value that could contain spaces or shell metacharacters (identity file, proxy
+// jump, ssh options) is shell-quoted to preserve its argv boundary — matching the
+// boundaries the plain `exec.Command("ssh", args...)` path keeps. The numeric port
+// needs no quoting.
 func (p Params) sshBootstrap() string {
 	parts := []string{"ssh"}
 	if p.Port != 0 {
 		parts = append(parts, "-p", strconv.Itoa(p.Port))
 	}
 	if p.IdentityFile != "" {
-		parts = append(parts, "-i", p.IdentityFile)
+		parts = append(parts, "-i", shellutil.Quote(p.IdentityFile))
 	}
 	if p.ProxyJump != "" {
-		parts = append(parts, "-J", p.ProxyJump)
+		parts = append(parts, "-J", shellutil.Quote(p.ProxyJump))
 	}
-	parts = append(parts, p.SSHOptions...)
+	for _, opt := range p.SSHOptions {
+		parts = append(parts, shellutil.Quote(opt))
+	}
 	return strings.Join(parts, " ")
 }
 

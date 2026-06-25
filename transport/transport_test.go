@@ -78,8 +78,39 @@ func TestBuildArgsMosh(t *testing.T) {
 	if !anyArgContains(args, "-p 2222") {
 		t.Errorf("mosh --ssh= must carry -p 2222, got %v", args)
 	}
-	if !anyArgContains(args, "-i /home/deploy/.ssh/id_ed25519") {
+	// The identity value is shell-quoted so mosh's shellwords() split preserves it.
+	if !anyArgContains(args, "-i '/home/deploy/.ssh/id_ed25519'") {
 		t.Errorf("mosh --ssh= must carry -i identity, got %v", args)
+	}
+}
+
+// TestBuildArgsMoshBootstrapQuoting pins that connection values containing spaces
+// or shell metacharacters keep their argv boundary inside mosh's --ssh= string.
+// mosh re-splits --ssh= with shellwords(), so each value must be shell-quoted;
+// a bare strings.Join would let a space-containing path break apart and make mosh
+// authenticate with the wrong arguments.
+func TestBuildArgsMoshBootstrapQuoting(t *testing.T) {
+	p := Params{
+		Transport:    "mosh",
+		User:         "deploy",
+		Address:      "10.0.0.1",
+		IdentityFile: "/home/deploy/My Keys/id_ed25519",
+		ProxyJump:    "user@bastion host",
+		SSHOptions:   []string{"-o", "ProxyCommand=corp connect %h"},
+	}
+
+	_, args, err := BuildArgs(p, remoteAttach)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !anyArgContains(args, "-i '/home/deploy/My Keys/id_ed25519'") {
+		t.Errorf("mosh --ssh= must shell-quote identity with spaces, got %v", args)
+	}
+	if !anyArgContains(args, "-J 'user@bastion host'") {
+		t.Errorf("mosh --ssh= must shell-quote proxy jump with spaces, got %v", args)
+	}
+	if !anyArgContains(args, "'ProxyCommand=corp connect %h'") {
+		t.Errorf("mosh --ssh= must shell-quote ssh options with spaces, got %v", args)
 	}
 }
 
