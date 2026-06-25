@@ -103,6 +103,41 @@ func TestSelectWorkingConnection(t *testing.T) {
 			t.Errorf("error should mention the primary address, got: %s", err.Error())
 		}
 	})
+
+	t.Run("no fallbacks: underlying primary error is preserved", func(t *testing.T) {
+		host := config.Host{User: "me", Address: "primary.example"}
+		test := func(c *ssh.Connection) error { return errors.New("host key verification failed") }
+		_, err := selectWorkingConnection(host, test)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "host key verification failed") {
+			t.Errorf("error should preserve the underlying SSH failure, got: %s", err.Error())
+		}
+	})
+
+	t.Run("all fail: each underlying error is preserved", func(t *testing.T) {
+		host := config.Host{
+			User:              "me",
+			Address:           "primary.example",
+			FallbackAddresses: []string{"fallback1.example"},
+		}
+		test := func(c *ssh.Connection) error {
+			if c.Address == "primary.example" {
+				return errors.New("permission denied (publickey)")
+			}
+			return errors.New("connection timed out")
+		}
+		_, err := selectWorkingConnection(host, test)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		for _, want := range []string{"permission denied (publickey)", "connection timed out"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should preserve %q, got: %s", want, err.Error())
+			}
+		}
+	})
 }
 
 // TestConnectHostCmd covers the wiring around selectWorkingConnection: when a

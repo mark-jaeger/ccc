@@ -334,26 +334,33 @@ func checkZmxLocalCmd() tea.Cmd {
 
 // selectWorkingConnection returns the first connection — the primary built from
 // host, then each host.FallbackAddresses entry in order — for which test
-// succeeds. If every candidate fails it returns an error naming the primary
-// address and each fallback that was tried, so the user can tell which routes
-// were attempted. test is injected so the selection logic stays unit-testable
-// without real SSH; connectHostCmd passes (*ssh.Connection).TestConnection.
+// succeeds. If every candidate fails it returns an error pairing each attempted
+// address with its underlying failure, so the user can tell whether the problem
+// is reachability (add/reorder fallbacks) or trust/config (bad key, host-key
+// mismatch, timeout). This preserves the diagnostic detail the pre-fallback TUI
+// surfaced by returning TestConnection's error directly. test is injected so the
+// selection logic stays unit-testable without real SSH; connectHostCmd passes
+// (*ssh.Connection).TestConnection.
 func selectWorkingConnection(host config.Host, test func(*ssh.Connection) error) (*ssh.Connection, error) {
 	primary := ssh.ConnectionFromHost(host)
-	if err := test(primary); err == nil {
+	primErr := test(primary)
+	if primErr == nil {
 		return primary, nil
 	}
 
-	for _, addr := range host.FallbackAddresses {
-		fallback := primary.WithAddress(addr)
-		if err := test(fallback); err == nil {
-			return fallback, nil
-		}
+	if len(host.FallbackAddresses) == 0 {
+		return nil, fmt.Errorf("cannot reach host at %s: %w", host.Address, primErr)
 	}
 
-	if len(host.FallbackAddresses) == 0 {
-		return nil, fmt.Errorf("cannot reach host at %s", host.Address)
+	failures := []string{fmt.Sprintf("%s: %v", host.Address, primErr)}
+	for _, addr := range host.FallbackAddresses {
+		fallback := primary.WithAddress(addr)
+		err := test(fallback)
+		if err == nil {
+			return fallback, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", addr, err))
 	}
-	return nil, fmt.Errorf("cannot reach host: primary %s and fallbacks [%s] all failed",
-		host.Address, strings.Join(host.FallbackAddresses, ", "))
+
+	return nil, fmt.Errorf("cannot reach host: all addresses failed [%s]", strings.Join(failures, "; "))
 }
