@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mark-jaeger/ccc/config"
@@ -415,6 +416,25 @@ func checkZmxLocalCmd(gen int) tea.Cmd {
 	}
 }
 
+// connectProbeTimeout bounds a single connect probe — the whole
+// TestConnectionContext, i.e. the SSH handshake AND the remote `echo ok` it runs
+// to confirm the link is usable. ConnectTimeout only bounds the handshake; the
+// remote command can wedge afterwards (a hanging login shell, a stalled mux)
+// while keepalives still ACK, so without this a live-but-stalled address would
+// pin the whole walk. It must exceed ConnectTimeout (10s) so a slow-but-working
+// handshake is not cut short. It is a var so tests can shorten it.
+var connectProbeTimeout = 20 * time.Second
+
+// probeConnection runs one connection test under a per-candidate deadline
+// derived from ctx, so a single stalled address cannot block the rest of the
+// fallback walk. The parent ctx stays free of a shared budget (esc still cancels
+// the whole walk through it); only this child carries the wall-clock bound.
+func probeConnection(ctx context.Context, test func(context.Context, *ssh.Connection) error, conn *ssh.Connection) error {
+	probeCtx, cancel := context.WithTimeout(ctx, connectProbeTimeout)
+	defer cancel()
+	return test(probeCtx, conn)
+}
+
 // selectWorkingConnection returns the first connection — the primary built from
 // host, then each host.FallbackAddresses entry in order — for which test
 // succeeds. If every candidate fails it returns an error pairing each attempted
@@ -425,13 +445,14 @@ func checkZmxLocalCmd(gen int) tea.Cmd {
 // selection logic stays unit-testable without real SSH; connectHostCmd passes
 // connectionTester (TestConnectionContext).
 //
-// ctx is threaded into each probe and checked between fallbacks: once the caller
-// cancels (esc) or the overall deadline passes, the walk short-circuits instead
-// of dialing every remaining dead address — the difference between a prompt
-// abort and a minutes-long freeze.
+// Each probe runs under its own connectProbeTimeout (via probeConnection) so a
+// live-but-stalled candidate self-aborts and the walk moves on; ctx is also
+// checked between fallbacks so a caller cancel (esc) short-circuits the rest.
+// The parent ctx carries no shared budget, so a slow early probe never starves a
+// reachable later fallback of its chance to connect.
 func selectWorkingConnection(ctx context.Context, host config.Host, test func(context.Context, *ssh.Connection) error) (*ssh.Connection, error) {
 	primary := ssh.ConnectionFromHost(host)
-	primErr := test(ctx, primary)
+	primErr := probeConnection(ctx, test, primary)
 	if primErr == nil {
 		return primary, nil
 	}
@@ -442,14 +463,14 @@ func selectWorkingConnection(ctx context.Context, host config.Host, test func(co
 
 	failures := []string{fmt.Sprintf("%s: %v", host.Address, primErr)}
 	for _, addr := range host.FallbackAddresses {
-		// Stop probing once the connect has been canceled (esc) or its deadline
-		// has passed, so an aborted connect returns promptly.
+		// Stop probing once the connect has been canceled (esc), so an aborted
+		// connect returns promptly instead of dialing every remaining address.
 		if err := ctx.Err(); err != nil {
 			failures = append(failures, fmt.Sprintf("aborted: %v", err))
 			return nil, fmt.Errorf("cannot reach host: connect aborted [%s]", strings.Join(failures, "; "))
 		}
 		fallback := primary.WithAddress(addr)
-		err := test(ctx, fallback)
+		err := probeConnection(ctx, test, fallback)
 		if err == nil {
 			return fallback, nil
 		}

@@ -175,6 +175,49 @@ func TestSelectWorkingConnection(t *testing.T) {
 			t.Errorf("expected the fallback walk to short-circuit after cancel, attempts=%v", attempts)
 		}
 	})
+
+	// A live-but-stalled probe (handshake succeeded, remote command never
+	// returns) must self-abort at the per-candidate deadline so the walk reaches a
+	// reachable later fallback. Without the per-probe timeout this hangs forever:
+	// the parent context is never cancelled here, so only connectProbeTimeout
+	// frees the stalled primary.
+	t.Run("stalled probe times out and a later fallback is tried", func(t *testing.T) {
+		orig := connectProbeTimeout
+		connectProbeTimeout = 50 * time.Millisecond
+		defer func() { connectProbeTimeout = orig }()
+
+		host := config.Host{
+			User:              "me",
+			Address:           "stalled.example",
+			FallbackAddresses: []string{"good.example"},
+		}
+		var attempts []string
+		test := func(ctx context.Context, c *ssh.Connection) error {
+			attempts = append(attempts, c.Address)
+			if c.Address == "good.example" {
+				return nil
+			}
+			<-ctx.Done() // stalled: only the per-probe deadline frees it
+			return ctx.Err()
+		}
+
+		start := time.Now()
+		conn, err := selectWorkingConnection(context.Background(), host, test)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("expected the fallback to be reached after the stalled primary timed out, got: %v", err)
+		}
+		if conn.Address != "good.example" {
+			t.Errorf("expected good.example, got %q", conn.Address)
+		}
+		if len(attempts) != 2 || attempts[0] != "stalled.example" || attempts[1] != "good.example" {
+			t.Errorf("expected [stalled.example good.example], got %v", attempts)
+		}
+		if elapsed > 2*time.Second {
+			t.Errorf("stalled probe should self-abort at the per-probe deadline, walk took %v", elapsed)
+		}
+	})
 }
 
 // TestConnectHostCmd covers the wiring around selectWorkingConnection: when a
