@@ -100,29 +100,40 @@ const maxReconnectAttempts = 2
 // the retry loop from spinning tightly on a flapping connection.
 const reconnectBackoff = 750 * time.Millisecond
 
-// requestTimeout is a generous wall-clock backstop for a connect/load operation.
-// It is deliberately large — large enough that a legitimately slow op over the
-// slow links this targets never trips it (a connect that walks several fallback
-// addresses, each with its own ConnectTimeout, completes well inside it) — yet
-// it still bounds an op that hangs *after* the transport is up: a remote
-// cat/zmx-list can wedge on stalled remote I/O while ssh keepalives keep ACKing,
-// and ssh's own bounds are not a hard guarantee (a user's ssh_options can weaken
-// ServerAlive/ConnectTimeout, since OpenSSH keeps the first value). esc cancels
-// sooner; this is the upper bound when the user waits.
+// requestTimeout is a generous wall-clock backstop for a single remote load
+// command — a project read, a zmx check, a session list. It is large enough
+// never to abort a legitimately slow command, yet it still bounds one that hangs
+// *after* the transport is up: such a command can wedge on stalled remote I/O
+// while ssh keepalives keep ACKing, so ServerAlive never fires. esc cancels
+// sooner; this is the upper bound when the user waits. Connect is bounded
+// differently (see beginConnectRequest) and scan gets the larger scanTimeout.
 const requestTimeout = 60 * time.Second
 
 // scanTimeout is the same backstop for a remote project scan, which walks the
 // filesystem (find over $HOME) and so warrants more headroom than a point read.
 const scanTimeout = 90 * time.Second
 
-// beginRequest opens a new cancelable request epoch for a connect/load
-// operation. It cancels any still-in-flight request, bumps reqGen so a late
-// result from the previous op is recognised as stale, and returns a context
-// (bounded by requestTimeout) plus the new generation for the command to close
-// over and tag its result with. The cancel func is retained on the model so esc
-// (cancelRequest) or the next beginRequest can abort the operation.
+// beginRequest opens a new cancelable request epoch for a single remote load
+// command. It cancels any still-in-flight request, bumps reqGen so a late result
+// from the previous op is recognised as stale, and returns a context (bounded by
+// requestTimeout) plus the new generation for the command to close over and tag
+// its result with. The cancel func is retained on the model so esc (cancelRequest)
+// or the next beginRequest can abort the operation.
 func (m *Model) beginRequest() (context.Context, int) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	return m.installRequest(ctx, cancel)
+}
+
+// beginConnectRequest opens an epoch for a host connect. Unlike a single load,
+// connect is a walk: selectWorkingConnection probes the primary address and
+// every configured fallback in turn, each hard-bounded by ssh's (now
+// non-overridable) ConnectTimeout. A single wall-clock budget shared across that
+// walk would abort it partway and skip a reachable later fallback — the more
+// fallbacks configured, the likelier — so connect uses a cancel-only context:
+// the per-address ConnectTimeout keeps every probe finite, and esc aborts the
+// whole walk.
+func (m *Model) beginConnectRequest() (context.Context, int) {
+	ctx, cancel := context.WithCancel(context.Background())
 	return m.installRequest(ctx, cancel)
 }
 
@@ -525,7 +536,7 @@ func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item := m.hostList.SelectedItem(); item != nil {
 				hi := item.(HostItem)
 				m.state = StateConnecting
-				ctx, gen := m.beginRequest()
+				ctx, gen := m.beginConnectRequest()
 				return m, connectHostCmd(ctx, gen, hi.Name(), hi.Host())
 			}
 		}

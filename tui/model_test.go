@@ -1120,6 +1120,25 @@ func TestBeginScanRequestHasDeadline(t *testing.T) {
 	}
 }
 
+// TestBeginConnectRequestHasNoDeadline pins that a host connect uses a
+// cancel-only context. A wall-clock budget shared across the primary + fallback
+// walk could expire mid-walk and skip a reachable later fallback; each address
+// is already bounded by ssh's (enforced) ConnectTimeout and esc aborts the walk,
+// so no cap is imposed here. Reintroducing a deadline fails this test.
+func TestBeginConnectRequestHasNoDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginConnectRequest()
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("beginConnectRequest must have no wall-clock deadline (it would cut the fallback walk short)")
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+	if m.cancel == nil {
+		t.Error("beginConnectRequest must retain a cancel func so esc aborts the walk")
+	}
+}
+
 // TestStaleSessionKilledIgnored verifies a kill that completes after the user
 // left the session screen (epoch bumped) does not start a session reload.
 func TestStaleSessionKilledIgnored(t *testing.T) {
