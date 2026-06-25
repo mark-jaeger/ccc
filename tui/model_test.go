@@ -604,11 +604,47 @@ func TestCreateSessionTracksLastSession(t *testing.T) {
 	if m.lastSession != "ccc.proj.dev" {
 		t.Errorf("expected lastSession=ccc.proj.dev, got %q", m.lastSession)
 	}
+	if m.lastProjectPath != "/home/user/proj" {
+		t.Errorf("expected lastProjectPath captured for reconnect, got %q", m.lastProjectPath)
+	}
 	if m.reconnectAttempts != 0 {
 		t.Errorf("expected reconnectAttempts reset to 0, got %d", m.reconnectAttempts)
 	}
 	if cmd == nil {
 		t.Error("expected a create-session command")
+	}
+}
+
+// TestCreateDropRetainsProjectPath verifies that when a freshly created
+// session's first attach drops with exit 255, the model enters reconnecting
+// with the project directory retained, so the reconnect can recreate the
+// session in the correct cwd instead of the login dir.
+func TestCreateDropRetainsProjectPath(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionNameInput
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/home/user/proj"
+
+	// Create the session via the name-input Enter path.
+	m.sessionNameInput.SetValue("dev")
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+
+	// The first attach drops before the session is established.
+	nm, cmd := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+	if m.lastSession != "ccc.proj.dev" {
+		t.Errorf("expected lastSession=ccc.proj.dev, got %q", m.lastSession)
+	}
+	if m.lastProjectPath != "/home/user/proj" {
+		t.Errorf("expected project dir retained for reconnect, got %q", m.lastProjectPath)
+	}
+	if cmd == nil {
+		t.Error("expected a backoff tick command")
 	}
 }
 

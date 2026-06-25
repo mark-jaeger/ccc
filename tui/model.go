@@ -65,12 +65,16 @@ type Model struct {
 
 	// Reconnect state for interactive-attach transport failures (exit 255).
 	// lastSession is the name of the most recently attached session, so a
-	// dropped connection can be re-fired. reconnectAttempts bounds the
-	// automatic retry loop. reconnectGen identifies the current reconnect epoch:
-	// it is bumped whenever the attempt budget is (re)set — i.e. on a fresh
-	// attach, a manual reconnect, or a cancel/navigation — so a backoff tick
-	// scheduled in a prior epoch is recognised as stale and ignored.
+	// dropped connection can be re-fired. lastProjectPath is that session's
+	// project directory, captured so a reconnect that has to (re)create a
+	// never-established session does so in the right cwd rather than the login
+	// dir. reconnectAttempts bounds the automatic retry loop. reconnectGen
+	// identifies the current reconnect epoch: it is bumped whenever the attempt
+	// budget is (re)set — i.e. on a fresh attach, a manual reconnect, or a
+	// cancel/navigation — so a backoff tick scheduled in a prior epoch is
+	// recognised as stale and ignored.
 	lastSession       string
+	lastProjectPath   string
 	reconnectAttempts int
 	reconnectGen      int
 }
@@ -206,9 +210,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionCreatedMsg:
-		// After creating, attach to the new session. Track it so a dropped
-		// connection can be re-fired, and open a fresh reconnect epoch.
+		// After creating, attach to the new session. Track it (and its project
+		// dir) so a dropped connection can be re-fired, and open a fresh epoch.
 		m.lastSession = msg.name
+		m.lastProjectPath = m.currentProjectPath
 		m.reconnectAttempts = 0
 		m.reconnectGen++
 		if m.isLocal {
@@ -490,10 +495,12 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(keyMsg, m.keys.Select):
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
-				// Fresh, user-initiated attach: remember the target and reset
-				// the reconnect counter so a later drop gets a full retry budget.
-				// Open a new epoch so any stale tick from a prior attach is dropped.
+				// Fresh, user-initiated attach: remember the target (and its
+				// project dir) and reset the reconnect counter so a later drop
+				// gets a full retry budget. Open a new epoch so any stale tick
+				// from a prior attach is dropped.
 				m.lastSession = session.Name
+				m.lastProjectPath = m.currentProjectPath
 				m.reconnectAttempts = 0
 				m.reconnectGen++
 				if m.isLocal {
@@ -570,8 +577,10 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// reports its outcome via sessionExitedMsg, so track the new session
 			// as the reconnect target now and open a fresh epoch; otherwise a
 			// transport drop (exit 255) on the first attach would re-fire against
-			// a stale or empty lastSession.
+			// a stale or empty lastSession. Capture the project dir too so a
+			// reconnect that has to recreate the session uses the right cwd.
 			m.lastSession = name
+			m.lastProjectPath = m.currentProjectPath
 			m.reconnectAttempts = 0
 			m.reconnectGen++
 			m.state = StateCreatingSession
@@ -651,14 +660,32 @@ func isTransportFailure(err error) bool {
 
 // attachLastSessionCmd re-fires the interactive attach for the last-attached
 // session, using the appropriate transport for the current mode.
+//
+// When the session's project directory is known it reconnects through the
+// project-aware create command (cd <dir> && zmx attach). zmx attach reattaches
+// to an existing session (the common dropped-connection case, where the cd is a
+// harmless no-op) but creates a missing one in the current directory — so if the
+// transport dropped before the initial create ever established the session, this
+// recreates it in its project directory rather than the login/default dir. With
+// no known directory it falls back to a plain attach (a bare `cd ''` would
+// otherwise abort the command).
 func (m Model) attachLastSessionCmd() tea.Cmd {
+	if m.lastProjectPath == "" {
+		if m.isLocal {
+			return attachSessionLocalCmd(m.lastSession)
+		}
+		if m.currentHost == nil {
+			return nil
+		}
+		return attachSessionCmd(*m.currentHost, m.lastSession)
+	}
 	if m.isLocal {
-		return attachSessionLocalCmd(m.lastSession)
+		return createSessionWithNameLocalCmd(m.lastSession, m.lastProjectPath)
 	}
 	if m.currentHost == nil {
 		return nil
 	}
-	return attachSessionCmd(*m.currentHost, m.lastSession)
+	return createSessionWithNameCmd(*m.currentHost, m.lastSession, m.lastProjectPath)
 }
 
 // ensureMinDimensions sets default dimensions if WindowSizeMsg hasn't arrived yet.
