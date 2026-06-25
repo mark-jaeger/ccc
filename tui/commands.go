@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mark-jaeger/ccc/config"
@@ -45,14 +46,29 @@ func loadHostsCmd() tea.Cmd {
 	}
 }
 
-// connectHostCmd establishes SSH connection to a host.
+// connectionTester probes whether a candidate connection is reachable. It is a
+// package-level seam (defaulting to (*ssh.Connection).TestConnection) so
+// connectHostCmd's fallback wiring can be unit-tested without real SSH.
+var connectionTester = func(c *ssh.Connection) error { return c.TestConnection() }
+
+// connectHostCmd establishes an SSH connection to a host, trying the primary
+// address first and then each entry in host.FallbackAddresses in order. This
+// mirrors the non-TUI flow (flow.tryFallbackAddresses) so the live TUI can
+// recover when the primary address becomes unreachable (e.g. when a laptop
+// roams between Wi-Fi, LTE, and Tailscale and the host's IP changes).
 func connectHostCmd(name string, host config.Host) tea.Cmd {
 	return func() tea.Msg {
-		conn := ssh.ConnectionFromHost(host)
-		// Test the connection
-		if err := conn.TestConnection(); err != nil {
+		conn, err := selectWorkingConnection(host, connectionTester)
+		if err != nil {
 			return errMsg{err}
 		}
+		// selectWorkingConnection may have fallen back to one of
+		// host.FallbackAddresses. Record the address that actually worked on the
+		// host handed to the model: later attach/create commands rebuild an
+		// ssh.Connection from currentHost (= this host), so they must target the
+		// same reachable address as runner rather than the dead primary. host is
+		// a value copy, so this mutation stays local to the command.
+		host.Address = conn.Address
 		return hostConnectedMsg{
 			hostName: name,
 			host:     host,
@@ -314,4 +330,37 @@ func checkZmxLocalCmd() tea.Cmd {
 		}
 		return zmxAvailableMsg{}
 	}
+}
+
+// selectWorkingConnection returns the first connection — the primary built from
+// host, then each host.FallbackAddresses entry in order — for which test
+// succeeds. If every candidate fails it returns an error pairing each attempted
+// address with its underlying failure, so the user can tell whether the problem
+// is reachability (add/reorder fallbacks) or trust/config (bad key, host-key
+// mismatch, timeout). This preserves the diagnostic detail the pre-fallback TUI
+// surfaced by returning TestConnection's error directly. test is injected so the
+// selection logic stays unit-testable without real SSH; connectHostCmd passes
+// (*ssh.Connection).TestConnection.
+func selectWorkingConnection(host config.Host, test func(*ssh.Connection) error) (*ssh.Connection, error) {
+	primary := ssh.ConnectionFromHost(host)
+	primErr := test(primary)
+	if primErr == nil {
+		return primary, nil
+	}
+
+	if len(host.FallbackAddresses) == 0 {
+		return nil, fmt.Errorf("cannot reach host at %s: %w", host.Address, primErr)
+	}
+
+	failures := []string{fmt.Sprintf("%s: %v", host.Address, primErr)}
+	for _, addr := range host.FallbackAddresses {
+		fallback := primary.WithAddress(addr)
+		err := test(fallback)
+		if err == nil {
+			return fallback, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v", addr, err))
+	}
+
+	return nil, fmt.Errorf("cannot reach host: all addresses failed [%s]", strings.Join(failures, "; "))
 }
