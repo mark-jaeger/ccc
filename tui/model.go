@@ -264,6 +264,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.reconnectGen || m.state != StateReconnecting {
 			return m, nil
 		}
+		// Local attaches run over a pipe and cannot block on an ssh prompt, so
+		// fire directly. For remote, first probe reachability non-interactively
+		// (bounded, BatchMode, no prompt) so an automatic interactive attach
+		// never seizes the terminal waiting on a password prompt or a long TCP
+		// connect against a host that is still down.
+		if m.isLocal {
+			return m, m.attachLastSessionCmd()
+		}
+		return m, m.reconnectProbeCmd()
+
+	case reconnectProbeMsg:
+		// Only act on a probe from the current epoch while still reconnecting.
+		if msg.gen != m.reconnectGen || m.state != StateReconnecting {
+			return m, nil
+		}
+		if !msg.ok {
+			// Host still unreachable (or auth broken): hand off to manual
+			// recovery instead of launching a blocking interactive ssh.
+			m.state = StateConnectionLost
+			return m, nil
+		}
 		return m, m.attachLastSessionCmd()
 
 	case sessionKilledMsg:
@@ -632,15 +653,25 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		m.state = StateSessionSelect
 		return m, nil
 	case StateError:
-		// Recover from the dead-end error screen: clear the error and return
-		// to the first usable screen for the current mode.
+		// Recover from the dead-end error screen: clear the error and return to
+		// the first usable screen for the current mode. The error may have fired
+		// before that screen's list was ever built (e.g. a startup host- or
+		// project-load failure), so (re)initialize the list from whatever data we
+		// have rather than entering a zero-value list.Model — its nil delegate
+		// would panic on the next update or render.
 		m.err = nil
 		m.reconnectAttempts = 0
 		m.reconnectGen++
+		m.ensureMinDimensions()
 		if m.isLocal {
+			var projects []config.Project
+			if m.projects != nil {
+				projects = m.projects.Projects
+			}
+			m.SetProjects(projects)
 			m.state = StateProjectSelect
 		} else {
-			m.state = StateHostSelect
+			m.SetHosts(m.hosts) // also sets state = StateHostSelect
 		}
 		return m, nil
 	}
@@ -656,6 +687,24 @@ func isTransportFailure(err error) bool {
 	}
 	var ee *exec.ExitError
 	return errors.As(err, &ee) && ee.ExitCode() == 255
+}
+
+// reconnectProbeCmd runs a bounded, non-interactive reachability check against
+// the current host before an automatic interactive reattach. It uses the
+// runner's non-interactive path (BatchMode + ConnectTimeout), so it fails fast
+// and never prompts — unlike the interactive attach it guards, which allocates
+// a PTY and can block indefinitely on a password prompt. The reconnect epoch is
+// captured so a result that arrives after a cancel/navigation is discarded.
+func (m Model) reconnectProbeCmd() tea.Cmd {
+	runner := m.runner
+	gen := m.reconnectGen
+	return func() tea.Msg {
+		if runner == nil {
+			return reconnectProbeMsg{gen: gen, ok: false}
+		}
+		_, err := runner.Run("true")
+		return reconnectProbeMsg{gen: gen, ok: err == nil}
+	}
 }
 
 // attachLastSessionCmd re-fires the interactive attach for the last-attached

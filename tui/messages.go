@@ -41,6 +41,16 @@ type reconnectMsg struct {
 	gen int
 }
 
+// reconnectProbeMsg carries the result of a bounded, non-interactive
+// reachability check run before an automatic interactive reattach. It guards
+// against a still-down or auth-broken host seizing the terminal with a blocking
+// ssh prompt. gen ties the probe to its reconnect epoch so a stale result is
+// ignored.
+type reconnectProbeMsg struct {
+	gen int
+	ok  bool
+}
+
 // sessionCreatedMsg is sent when a new session is created.
 type sessionCreatedMsg struct {
 	name string

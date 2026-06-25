@@ -666,3 +666,120 @@ func TestSessionExitedCleanResets(t *testing.T) {
 		t.Error("expected a session-refresh command")
 	}
 }
+
+// fakeRunner is a Runner stub for exercising remote-mode reconnect probes.
+type fakeRunner struct {
+	runErr error
+}
+
+func (f fakeRunner) Run(string) (string, error)  { return "", f.runErr }
+func (f fakeRunner) RunInteractive(string) error { return nil }
+
+// TestErrorRecoveryInitializesList verifies that recovering from StateError when
+// the destination list was never built (e.g. a startup load failure) lands on a
+// usable, non-panicking screen rather than a zero-value list.Model.
+func TestErrorRecoveryInitializesList(t *testing.T) {
+	tests := []struct {
+		name    string
+		isLocal bool
+		want    State
+	}{
+		{"remote", false, StateHostSelect},
+		{"local", true, StateProjectSelect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.isLocal)
+			m.state = StateError
+			m.err = fmt.Errorf("startup load failed")
+			// Lists are deliberately left at their zero value: the load failed
+			// before SetHosts/SetProjects ran.
+
+			nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+			m = nm.(Model)
+
+			if m.state != tt.want {
+				t.Fatalf("expected %v, got %v", tt.want, m.state)
+			}
+			// Rendering and a follow-up key update must not panic on an
+			// uninitialized list (nil delegate).
+			_ = m.View()
+			nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+			_ = nm.(Model).View()
+		})
+	}
+}
+
+// TestReconnectRemoteProbesBeforeAttach verifies that an in-epoch reconnect tick
+// in remote mode kicks off a non-interactive reachability probe rather than
+// firing the interactive attach directly.
+func TestReconnectRemoteProbesBeforeAttach(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	m.lastSession = "ccc.proj.main"
+
+	nm, cmd := m.Update(reconnectMsg{gen: m.reconnectGen})
+	m = nm.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected a probe command before the interactive attach")
+	}
+	if m.state != StateReconnecting {
+		t.Errorf("expected to remain StateReconnecting during probe, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeUnreachable verifies that a failed reachability probe hands
+// off to manual recovery instead of launching a blocking interactive ssh.
+func TestReconnectProbeUnreachable(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{runErr: fmt.Errorf("ssh: connect to host failed")}
+	m.lastSession = "ccc.proj.main"
+
+	nm, _ := m.Update(reconnectProbeMsg{gen: m.reconnectGen, ok: false})
+	m = nm.(Model)
+
+	if m.state != StateConnectionLost {
+		t.Errorf("expected StateConnectionLost after failed probe, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeReachable verifies a successful probe proceeds to the
+// interactive attach while staying in StateReconnecting.
+func TestReconnectProbeReachable(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	m.lastSession = "ccc.proj.main"
+	m.currentHost = &config.Host{Name: "h", Address: "1.2.3.4"}
+
+	nm, cmd := m.Update(reconnectProbeMsg{gen: m.reconnectGen, ok: true})
+	m = nm.(Model)
+
+	if cmd == nil {
+		t.Error("expected an attach command after a successful probe")
+	}
+	if m.state != StateReconnecting {
+		t.Errorf("expected to remain StateReconnecting until attach, got %v", m.state)
+	}
+}
+
+// TestReconnectProbeStaleIgnored verifies a probe result from a superseded epoch
+// (e.g. after the user canceled) is ignored.
+func TestReconnectProbeStaleIgnored(t *testing.T) {
+	m := New(false) // remote mode
+	m.state = StateReconnecting
+	m.runner = fakeRunner{}
+	staleGen := m.reconnectGen
+	m.reconnectGen++ // a cancel/navigation bumped the epoch
+
+	nm, cmd := m.Update(reconnectProbeMsg{gen: staleGen, ok: true})
+	m = nm.(Model)
+
+	if cmd != nil {
+		t.Error("expected a stale probe result to be ignored (nil cmd)")
+	}
+}
