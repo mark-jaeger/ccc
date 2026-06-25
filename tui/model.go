@@ -66,9 +66,13 @@ type Model struct {
 	// Reconnect state for interactive-attach transport failures (exit 255).
 	// lastSession is the name of the most recently attached session, so a
 	// dropped connection can be re-fired. reconnectAttempts bounds the
-	// automatic retry loop.
+	// automatic retry loop. reconnectGen identifies the current reconnect epoch:
+	// it is bumped whenever the attempt budget is (re)set — i.e. on a fresh
+	// attach, a manual reconnect, or a cancel/navigation — so a backoff tick
+	// scheduled in a prior epoch is recognised as stale and ignored.
 	lastSession       string
 	reconnectAttempts int
+	reconnectGen      int
 }
 
 // maxReconnectAttempts bounds automatic re-attach attempts before the model
@@ -203,9 +207,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionCreatedMsg:
 		// After creating, attach to the new session. Track it so a dropped
-		// connection can be re-fired.
+		// connection can be re-fired, and open a fresh reconnect epoch.
 		m.lastSession = msg.name
 		m.reconnectAttempts = 0
+		m.reconnectGen++
 		if m.isLocal {
 			return m, attachSessionLocalCmd(msg.name)
 		}
@@ -220,8 +225,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.reconnectAttempts < maxReconnectAttempts {
 				m.reconnectAttempts++
 				m.state = StateReconnecting
+				// Capture the current epoch so a cancel/navigation that bumps
+				// reconnectGen before this tick fires makes the tick stale.
+				gen := m.reconnectGen
 				return m, tea.Tick(reconnectBackoff, func(time.Time) tea.Msg {
-					return reconnectMsg{}
+					return reconnectMsg{gen: gen}
 				})
 			}
 			// Exhausted automatic attempts: hand off to manual recovery.
@@ -234,15 +242,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateError
 			return m, nil
 		}
-		// Clean exit: reset the retry counter and refresh sessions.
+		// Clean exit: reset the retry counter and refresh sessions. Bump the
+		// epoch so any tick still in flight from a prior drop is ignored.
 		m.reconnectAttempts = 0
+		m.reconnectGen++
 		if m.isLocal {
 			return m, loadSessionsLocalCmd(m.currentProjectKey)
 		}
 		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
 
 	case reconnectMsg:
-		// Backoff elapsed: re-fire the interactive attach for lastSession.
+		// Backoff elapsed: re-fire the interactive attach for lastSession, but
+		// only if this tick belongs to the current epoch and we are still
+		// reconnecting. Otherwise the user canceled or navigated away, and
+		// firing the attach would unexpectedly seize the terminal.
+		if msg.gen != m.reconnectGen || m.state != StateReconnecting {
+			return m, nil
+		}
 		return m, m.attachLastSessionCmd()
 
 	case sessionKilledMsg:
@@ -333,6 +349,7 @@ func (m Model) updateConnectionLost(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		if key.Matches(keyMsg, m.keys.Reconnect) {
 			m.reconnectAttempts = 0
+			m.reconnectGen++
 			m.state = StateReconnecting
 			return m, m.attachLastSessionCmd()
 		}
@@ -475,8 +492,10 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 				session := item.(SessionItem).Session()
 				// Fresh, user-initiated attach: remember the target and reset
 				// the reconnect counter so a later drop gets a full retry budget.
+				// Open a new epoch so any stale tick from a prior attach is dropped.
 				m.lastSession = session.Name
 				m.reconnectAttempts = 0
+				m.reconnectGen++
 				if m.isLocal {
 					return m, attachSessionLocalCmd(session.Name)
 				}
@@ -547,7 +566,14 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Create the session
+			// Create the session. The create command attaches directly and
+			// reports its outcome via sessionExitedMsg, so track the new session
+			// as the reconnect target now and open a fresh epoch; otherwise a
+			// transport drop (exit 255) on the first attach would re-fire against
+			// a stale or empty lastSession.
+			m.lastSession = name
+			m.reconnectAttempts = 0
+			m.reconnectGen++
 			m.state = StateCreatingSession
 			m.sessionNameInputErr = ""
 			if m.isLocal {
@@ -590,8 +616,10 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 	case StateHostSelect:
 		return m, tea.Quit
 	case StateReconnecting, StateConnectionLost:
-		// Cancel reconnection and return to the session list.
+		// Cancel reconnection and return to the session list. Bump the epoch so
+		// a backoff tick already scheduled cannot re-fire the attach.
 		m.reconnectAttempts = 0
+		m.reconnectGen++
 		m.state = StateSessionSelect
 		return m, nil
 	case StateError:
@@ -599,6 +627,7 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		// to the first usable screen for the current mode.
 		m.err = nil
 		m.reconnectAttempts = 0
+		m.reconnectGen++
 		if m.isLocal {
 			m.state = StateProjectSelect
 		} else {

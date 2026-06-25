@@ -33,8 +33,13 @@ type sessionExitedMsg struct {
 }
 
 // reconnectMsg is sent after the auto-reattach backoff elapses, signalling the
-// model to re-fire the interactive attach for lastSession.
-type reconnectMsg struct{}
+// model to re-fire the interactive attach for lastSession. gen identifies the
+// reconnect epoch the tick was scheduled in; a tick whose gen no longer matches
+// the model (because the user canceled, navigated away, or started a fresh
+// attach) is stale and must be ignored rather than hijacking the terminal.
+type reconnectMsg struct {
+	gen int
+}
 
 // sessionCreatedMsg is sent when a new session is created.
 type sessionCreatedMsg struct {

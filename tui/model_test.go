@@ -525,6 +525,93 @@ func TestReconnectCancelAndExhaust(t *testing.T) {
 	}
 }
 
+// TestReconnectCanceledTickIgnored verifies that a backoff tick scheduled before
+// the user cancels (esc) is ignored once it finally fires, instead of seizing
+// the terminal with a re-attach.
+func TestReconnectCanceledTickIgnored(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	// Drop -> reconnecting; a backoff tick is scheduled for this epoch.
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+	staleGen := m.reconnectGen
+
+	// User cancels with esc before the tick fires.
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+	if m.state != StateSessionSelect {
+		t.Fatalf("expected esc to return to StateSessionSelect, got %v", m.state)
+	}
+
+	// The previously scheduled tick now arrives; it must be ignored.
+	nm, cmd := m.Update(reconnectMsg{gen: staleGen})
+	m = nm.(Model)
+	if cmd != nil {
+		t.Error("expected canceled reconnect tick to be ignored (nil cmd)")
+	}
+	if m.state != StateSessionSelect {
+		t.Errorf("expected to remain in StateSessionSelect, got %v", m.state)
+	}
+}
+
+// TestReconnectTickFires verifies that an in-epoch tick delivered while still
+// reconnecting does re-fire the attach.
+func TestReconnectTickFires(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionSelect
+	m.currentProjectKey = "proj"
+	m.lastSession = "ccc.proj.main"
+
+	nm, _ := m.Update(sessionExitedMsg{err: exitError255(t)})
+	m = nm.(Model)
+	if m.state != StateReconnecting {
+		t.Fatalf("expected StateReconnecting, got %v", m.state)
+	}
+
+	nm, cmd := m.Update(reconnectMsg{gen: m.reconnectGen})
+	m = nm.(Model)
+	if cmd == nil {
+		t.Error("expected matching in-epoch reconnect tick to fire an attach cmd")
+	}
+}
+
+// TestCreateSessionTracksLastSession verifies the create-and-attach path records
+// the new session as the reconnect target (and resets the attempt budget), so a
+// transport drop on the first attach retries the right session rather than a
+// stale one.
+func TestCreateSessionTracksLastSession(t *testing.T) {
+	m := New(true) // local mode
+	m.state = StateSessionNameInput
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/home/user/proj"
+	// Simulate stale reconnect context from a prior attach.
+	m.lastSession = "ccc.other.stale"
+	m.reconnectAttempts = 1
+
+	m.sessionNameInput.SetValue("dev")
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+
+	if m.state != StateCreatingSession {
+		t.Fatalf("expected StateCreatingSession, got %v", m.state)
+	}
+	if m.lastSession != "ccc.proj.dev" {
+		t.Errorf("expected lastSession=ccc.proj.dev, got %q", m.lastSession)
+	}
+	if m.reconnectAttempts != 0 {
+		t.Errorf("expected reconnectAttempts reset to 0, got %d", m.reconnectAttempts)
+	}
+	if cmd == nil {
+		t.Error("expected a create-session command")
+	}
+}
+
 // TestSessionExitedCleanResets verifies a clean exit refreshes sessions and
 // resets the reconnect counter (3A).
 func TestSessionExitedCleanResets(t *testing.T) {
