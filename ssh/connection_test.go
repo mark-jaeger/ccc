@@ -131,6 +131,45 @@ func TestBuildArgsWithSSHOptions(t *testing.T) {
 	}
 }
 
+// TestSSHResilienceOptionsPrecedeUserOptions verifies ccc emits its
+// resilience/correctness options before the user's ssh_options, so ccc wins
+// OpenSSH's first-value-wins rule: a user ServerAliveInterval/BatchMode entry is
+// still present but no longer overrides ccc's fail-fast defaults.
+func TestSSHResilienceOptionsPrecedeUserOptions(t *testing.T) {
+	c := Connection{
+		User:       "deploy",
+		Address:    "10.0.0.1",
+		SSHOptions: []string{"-o", "ServerAliveInterval=60", "-o", "BatchMode=no"},
+	}
+
+	args := c.buildNonInteractiveArgs("ls")
+	mustPrecede := func(cccVal, userVal string) {
+		t.Helper()
+		ci, ui := indexOfValue(args, cccVal), indexOfValue(args, userVal)
+		if ci == -1 {
+			t.Fatalf("ccc option %q missing from args: %v", cccVal, args)
+		}
+		if ui == -1 {
+			t.Fatalf("user option %q missing from args: %v", userVal, args)
+		}
+		if ci >= ui {
+			t.Errorf("ccc %q (idx %d) must precede user %q (idx %d) to win; args: %v", cccVal, ci, userVal, ui, args)
+		}
+	}
+	mustPrecede("ServerAliveInterval=5", "ServerAliveInterval=60")
+	mustPrecede("BatchMode=yes", "BatchMode=no")
+
+	// Interactive path: ccc's keepalive also precedes the user's, and -t follows
+	// all -o options (ccc's and the user's) or ssh ignores them.
+	iargs := c.buildInteractiveArgs("attach")
+	if i, u := indexOfValue(iargs, "ServerAliveInterval=10"), indexOfValue(iargs, "ServerAliveInterval=60"); i == -1 || u == -1 || i >= u {
+		t.Errorf("interactive: ccc ServerAliveInterval=10 must precede user =60; args: %v", iargs)
+	}
+	if tIdx, uIdx := indexOfValue(iargs, "-t"), indexOfValue(iargs, "ServerAliveInterval=60"); tIdx == -1 || tIdx < uIdx {
+		t.Errorf("interactive: -t (idx %d) must follow the user options (idx %d); args: %v", tIdx, uIdx, iargs)
+	}
+}
+
 func TestBuildArgsWithPort(t *testing.T) {
 	c := Connection{
 		User:    "deploy",
@@ -407,6 +446,16 @@ func TestRunContextDeadline(t *testing.T) {
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("expected a timeout error, got %q", err.Error())
 	}
+}
+
+// indexOfValue returns the index of the first occurrence of value in args, or -1.
+func indexOfValue(args []string, value string) int {
+	for i, a := range args {
+		if a == value {
+			return i
+		}
+	}
+	return -1
 }
 
 // containsOption checks that args contains a consecutive pair of flag and value.

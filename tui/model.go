@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -77,6 +78,18 @@ type Model struct {
 	lastProjectPath   string
 	reconnectAttempts int
 	reconnectGen      int
+
+	// Cancelable-request state for the connect/load/scan operations that run in
+	// StateConnecting and StateLoading. cancel aborts the in-flight bounded
+	// context so a dead network self-aborts (and esc can cancel) instead of
+	// hanging on the kernel TCP timeout; reqGen is the request epoch, bumped on
+	// every new op and on esc-cancel, so a late result from a superseded or
+	// canceled operation is recognised as stale and dropped (bubbletea cannot
+	// kill the goroutine, so the dropped message is the backstop). This is kept
+	// deliberately SEPARATE from reconnectGen (which guards the interactive
+	// auto-reattach ticks) so the two lifecycles cannot invalidate each other.
+	cancel context.CancelFunc
+	reqGen int
 }
 
 // maxReconnectAttempts bounds automatic re-attach attempts before the model
@@ -86,6 +99,72 @@ const maxReconnectAttempts = 2
 // reconnectBackoff is the delay between automatic re-attach attempts. It keeps
 // the retry loop from spinning tightly on a flapping connection.
 const reconnectBackoff = 750 * time.Millisecond
+
+// requestTimeout is a generous wall-clock backstop for a single remote load
+// command — a project read, a zmx check, a session list. It is large enough
+// never to abort a legitimately slow command, yet it still bounds one that hangs
+// *after* the transport is up: such a command can wedge on stalled remote I/O
+// while ssh keepalives keep ACKing, so ServerAlive never fires. esc cancels
+// sooner; this is the upper bound when the user waits. Connect is bounded
+// differently (see beginConnectRequest) and scan gets the larger scanTimeout.
+const requestTimeout = 60 * time.Second
+
+// scanTimeout is the same backstop for a remote project scan, which walks the
+// filesystem (find over $HOME) and so warrants more headroom than a point read.
+const scanTimeout = 90 * time.Second
+
+// beginRequest opens a new cancelable request epoch for a single remote load
+// command. It cancels any still-in-flight request, bumps reqGen so a late result
+// from the previous op is recognised as stale, and returns a context (bounded by
+// requestTimeout) plus the new generation for the command to close over and tag
+// its result with. The cancel func is retained on the model so esc (cancelRequest)
+// or the next beginRequest can abort the operation.
+func (m *Model) beginRequest() (context.Context, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	return m.installRequest(ctx, cancel)
+}
+
+// beginConnectRequest opens an epoch for a host connect. Unlike a single load,
+// connect is a walk: selectWorkingConnection probes the primary address and
+// every configured fallback in turn, each hard-bounded by ssh's (now
+// non-overridable) ConnectTimeout. A single wall-clock budget shared across that
+// walk would abort it partway and skip a reachable later fallback — the more
+// fallbacks configured, the likelier — so connect uses a cancel-only context:
+// the per-address ConnectTimeout keeps every probe finite, and esc aborts the
+// whole walk.
+func (m *Model) beginConnectRequest() (context.Context, int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return m.installRequest(ctx, cancel)
+}
+
+// beginScanRequest is beginRequest with the larger scanTimeout backstop for a
+// remote project scan — the long-running filesystem walk that most warrants
+// headroom while still self-aborting if it wedges on a stalled mount.
+func (m *Model) beginScanRequest() (context.Context, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
+	return m.installRequest(ctx, cancel)
+}
+
+// installRequest cancels any in-flight request, opens a new epoch (bumping
+// reqGen), and retains the cancel func so esc or the next request can abort it.
+func (m *Model) installRequest(ctx context.Context, cancel context.CancelFunc) (context.Context, int) {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.reqGen++
+	m.cancel = cancel
+	return ctx, m.reqGen
+}
+
+// cancelRequest aborts any in-flight cancelable request and invalidates its
+// generation so a late result is dropped. Safe to call when none is in flight.
+func (m *Model) cancelRequest() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.reqGen++
+}
 
 // New creates a new TUI model.
 func New(isLocal bool) Model {
@@ -109,11 +188,12 @@ func New(isLocal bool) Model {
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	if m.isLocal {
-		// Local mode: skip host selection, load projects directly
+		// Local mode: skip host selection, load projects directly. These startup
+		// commands are unguarded (gen 0): there is no prior request to supersede.
 		return tea.Batch(
 			m.spinner.Tick,
-			checkZmxLocalCmd(),
-			loadProjectsLocalCmd(),
+			checkZmxLocalCmd(0),
+			loadProjectsLocalCmd(0),
 		)
 	}
 	return tea.Batch(
@@ -178,25 +258,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case hostConnectedMsg:
+		// Drop a connect result from a superseded/canceled request (esc bumped
+		// reqGen): applying it would set a runner the user already abandoned.
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		m.currentHost = &msg.host
 		m.selectedHost = msg.hostName
 		m.runner = msg.runner
+		// Discard the previous host's project state before loading this host's.
+		// m.projects is host-scoped; leaving it set would let a later esc (whose
+		// StateLoading back-target keys off m.projects == nil) or a delayed result
+		// render the old host's projects against the new runner — and a subsequent
+		// select/reorder/delete would then write the wrong host's paths.
+		m.projects = nil
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
+		m.selectedProject = ""
 		m.state = StateLoading
-		// Check zmx first, only load projects if available
+		// Check zmx first, only load projects if available. Open a fresh request
+		// epoch so esc can cancel the (blocking) remote check and the result is
+		// gen-validated.
+		ctx, gen := m.beginRequest()
 		return m, tea.Batch(
 			m.spinner.Tick,
-			checkZmxCmd(m.runner),
+			checkZmxCmd(ctx, gen, m.runner),
 		)
 
 	case zmxAvailableMsg:
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		// zmx is installed, now load projects
 		// In local mode, projects are already loaded from Init()
 		if m.isLocal {
 			return m, nil
 		}
-		return m, loadProjectsCmd(m.runner)
+		ctx, gen := m.beginRequest()
+		return m, loadProjectsCmd(ctx, gen, m.runner)
 
 	case projectsLoadedMsg:
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		m.projects = msg.projects
 		m.ensureMinDimensions()
 		m.SetProjects(msg.projects.Projects)
@@ -204,6 +308,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionsLoadedMsg:
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		m.sessions = msg.sessions
 		m.SetSessions(msg.sessions, m.currentProjectKey)
 		m.state = StateSessionSelect
@@ -248,13 +355,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Clean exit: reset the retry counter and refresh sessions. Bump the
-		// epoch so any tick still in flight from a prior drop is ignored.
+		// reconnect epoch so any tick still in flight from a prior drop is ignored,
+		// and open a fresh request epoch for the (cancelable) session reload.
 		m.reconnectAttempts = 0
 		m.reconnectGen++
+		ctx, gen := m.beginRequest()
 		if m.isLocal {
-			return m, loadSessionsLocalCmd(m.currentProjectKey)
+			return m, loadSessionsLocalCmd(gen, m.currentProjectKey)
 		}
-		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+		return m, loadSessionsCmd(ctx, gen, m.runner, m.currentProjectKey)
 
 	case reconnectMsg:
 		// Backoff elapsed: re-fire the interactive attach for lastSession, but
@@ -288,13 +397,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.attachLastSessionCmd()
 
 	case sessionKilledMsg:
-		// Refresh sessions after kill
-		if m.isLocal {
-			return m, loadSessionsLocalCmd(m.currentProjectKey)
+		// Drop a kill that completed after the user left the session screen (esc
+		// bumped the epoch). Reloading now would reload the wrong project, yank the
+		// user back to the session list, or — once leave-host has nil'd the runner —
+		// dial a nil Runner and panic. The nil-runner guard is belt-and-suspenders
+		// in case some navigation path leaves the epoch unbumped.
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
 		}
-		return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+		if !m.isLocal && m.runner == nil {
+			return m, nil
+		}
+		// Refresh sessions after kill, through a fresh cancelable request epoch.
+		ctx, gen := m.beginRequest()
+		if m.isLocal {
+			return m, loadSessionsLocalCmd(gen, m.currentProjectKey)
+		}
+		return m, loadSessionsCmd(ctx, gen, m.runner, m.currentProjectKey)
 
 	case scanCompleteMsg:
+		// Drop a scan result from a superseded/canceled request (esc bumped
+		// reqGen) before mutating the project list.
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		// Merge scanned projects with existing
 		if m.projects == nil {
 			m.projects = &config.ProjectsConfig{
@@ -317,9 +443,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Save and reload
 		if m.isLocal {
-			return m, saveProjectsLocalCmd(m.projects)
+			return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 		}
-		return m, saveProjectsCmd(m.runner, m.projects)
+		return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 
 	case projectDeletedMsg:
 		if m.projects != nil {
@@ -330,13 +456,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if m.isLocal {
-				return m, saveProjectsLocalCmd(m.projects)
+				return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 			}
-			return m, saveProjectsCmd(m.runner, m.projects)
+			return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 		}
 		return m, nil
 
 	case errMsg:
+		// Drop an error from a superseded/canceled connect/load/scan request: the
+		// user already navigated away (esc), so surfacing it would clobber the
+		// screen they returned to. Unguarded errors (gen 0 — saves, kills, the
+		// zmx-not-found install message, startup loads) always apply.
+		if isStaleReq(msg.gen, m.reqGen) {
+			return m, nil
+		}
 		m.err = msg.err
 		// Fatal errors: quit TUI so error prints to normal terminal (selectable)
 		if strings.Contains(msg.err.Error(), "zmx not found") {
@@ -403,7 +536,8 @@ func (m Model) updateHostSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item := m.hostList.SelectedItem(); item != nil {
 				hi := item.(HostItem)
 				m.state = StateConnecting
-				return m, connectHostCmd(hi.Name(), hi.Host())
+				ctx, gen := m.beginConnectRequest()
+				return m, connectHostCmd(ctx, gen, hi.Name(), hi.Host())
 			}
 		}
 	}
@@ -455,17 +589,19 @@ func (m Model) updateProjectSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentProjectPath = pi.Project().Path
 				m.selectedProject = pi.Key()
 				m.state = StateLoading
+				ctx, gen := m.beginRequest()
 				if m.isLocal {
-					return m, loadSessionsLocalCmd(m.currentProjectKey)
+					return m, loadSessionsLocalCmd(gen, m.currentProjectKey)
 				}
-				return m, loadSessionsCmd(m.runner, m.currentProjectKey)
+				return m, loadSessionsCmd(ctx, gen, m.runner, m.currentProjectKey)
 			}
 		case key.Matches(keyMsg, m.keys.Scan):
 			m.state = StateLoading
+			ctx, gen := m.beginScanRequest()
 			if m.isLocal {
-				return m, scanProjectsLocalCmd()
+				return m, scanProjectsLocalCmd(gen)
 			}
-			return m, scanProjectsCmd(m.runner)
+			return m, scanProjectsCmd(ctx, gen, m.runner)
 		case key.Matches(keyMsg, m.keys.Delete):
 			if item := m.projectList.SelectedItem(); item != nil {
 				pi := item.(ProjectItem)
@@ -501,9 +637,9 @@ func (m Model) reorderProject(direction int) (tea.Model, tea.Cmd) {
 
 	// Save
 	if m.isLocal {
-		return m, saveProjectsLocalCmd(m.projects)
+		return m, saveProjectsLocalCmd(m.reqGen, m.projects)
 	}
-	return m, saveProjectsCmd(m.runner, m.projects)
+	return m, saveProjectsCmd(m.reqGen, m.runner, m.projects)
 }
 
 // updateSessionSelect handles updates when in session selection state.
@@ -539,9 +675,9 @@ func (m Model) updateSessionSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item := m.sessionList.SelectedItem(); item != nil {
 				session := item.(SessionItem).Session()
 				if m.isLocal {
-					return m, killSessionLocalCmd(session.Name)
+					return m, killSessionLocalCmd(m.reqGen, session.Name)
 				}
-				return m, killSessionCmd(m.runner, session.Name)
+				return m, killSessionCmd(m.reqGen, m.runner, session.Name)
 			}
 		}
 	}
@@ -631,6 +767,11 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		m.state = StateSessionSelect
 		return m, nil
 	case StateSessionSelect:
+		// Leaving the session screen invalidates anything still tied to it: bump
+		// the epoch (and cancel any in-flight session load) so a delayed
+		// load/kill completion for this project is dropped instead of yanking the
+		// user back here or reloading the wrong project.
+		m.cancelRequest()
 		m.state = StateProjectSelect
 		m.selectedProject = ""
 		m.currentProjectKey = ""
@@ -639,10 +780,19 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		if m.isLocal {
 			return m, tea.Quit
 		}
+		// Leaving the host invalidates anything still tied to it: bump the request
+		// epoch so a delayed save reload or load result for this host is dropped
+		// instead of clobbering the next host's screen, and drop the host-scoped
+		// project state outright.
+		m.cancelRequest()
 		m.state = StateHostSelect
 		m.selectedHost = ""
 		m.currentHost = nil
 		m.runner = nil
+		m.projects = nil
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
+		m.selectedProject = ""
 	case StateHostSelect:
 		return m, tea.Quit
 	case StateReconnecting, StateConnectionLost:
@@ -651,6 +801,44 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		m.reconnectAttempts = 0
 		m.reconnectGen++
 		m.state = StateSessionSelect
+		return m, nil
+	case StateConnecting:
+		// Abort an in-flight connect (and its fallback probe) and return to host
+		// selection. cancelRequest cancels the bounded context so the ssh child is
+		// killed and the goroutine unblocks, and bumps reqGen so the late result
+		// is dropped. The destination list is (re)initialized via SetHosts so we
+		// never render or update a zero-value list.Model.
+		m.cancelRequest()
+		m.selectedHost = ""
+		m.currentHost = nil
+		m.runner = nil
+		m.ensureMinDimensions()
+		m.SetHosts(m.hosts) // also sets state = StateHostSelect
+		return m, nil
+	case StateLoading:
+		// Abort an in-flight load/scan and step back one screen. Where we land
+		// depends on how far we got: before any projects exist we are in the
+		// initial post-connect load, so there is nothing to step back to but host
+		// selection; once projects are loaded, return to project selection. Local
+		// mode has no host screen, so it always lands on project selection.
+		m.cancelRequest()
+		m.ensureMinDimensions()
+		if !m.isLocal && m.projects == nil {
+			m.selectedHost = ""
+			m.currentHost = nil
+			m.runner = nil
+			m.SetHosts(m.hosts) // also sets state = StateHostSelect
+			return m, nil
+		}
+		m.selectedProject = ""
+		m.currentProjectKey = ""
+		m.currentProjectPath = ""
+		var projects []config.Project
+		if m.projects != nil {
+			projects = m.projects.Projects
+		}
+		m.SetProjects(projects)
+		m.state = StateProjectSelect
 		return m, nil
 	case StateError:
 		// Recover from the dead-end error screen: clear the error and return to
@@ -676,6 +864,16 @@ func (m Model) handleBack() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// isStaleReq reports whether a message tagged with generation msgGen should be
+// dropped because it belongs to a superseded or canceled request epoch. A msgGen
+// of 0 is a sentinel for an unguarded message (startup loads, the post-scan save
+// reload, saves/kills, the zmx-not-found install error): it always applies.
+// Otherwise the message applies only when its generation still matches the
+// model's current reqGen.
+func isStaleReq(msgGen, reqGen int) bool {
+	return msgGen != 0 && msgGen != reqGen
 }
 
 // isTransportFailure reports whether err is an ssh transport failure, signalled
@@ -777,7 +975,8 @@ func (m Model) View() string {
 
 	switch m.state {
 	case StateLoading:
-		return pad + m.spinner.View() + " Loading..."
+		hint := dimStyle.Render("[esc] cancel")
+		return pad + m.spinner.View() + " Loading...\n\n" + hint
 	case StateHostSelect:
 		return pad + m.hostList.View()
 	case StateProjectSelect:
@@ -787,7 +986,8 @@ func (m Model) View() string {
 	case StateSessionNameInput:
 		return pad + m.sessionNameInputView()
 	case StateConnecting:
-		return pad + m.spinner.View() + " Connecting..."
+		hint := dimStyle.Render("[esc] cancel")
+		return pad + m.spinner.View() + " Connecting...\n\n" + hint
 	case StateReconnecting:
 		hint := dimStyle.Render("[esc] cancel")
 		return pad + m.spinner.View() + " Connection lost — reattaching…\n\n" + hint

@@ -59,8 +59,15 @@ func (c *Connection) target() string {
 	return c.User + "@" + c.Address
 }
 
-// commonArgs builds the shared argument list: port, identity file, proxy jump,
-// and any extra SSH options.
+// commonArgs builds the shared argument prefix: port, identity file, proxy jump.
+//
+// The user's SSHOptions are deliberately NOT included here. Each builder appends
+// them AFTER ccc's own -o options so that ccc's resilience/correctness options
+// take precedence: OpenSSH uses the first value seen for a repeated option, so
+// emitting ccc's options first prevents a user ssh_options entry (e.g.
+// ServerAliveInterval, ConnectTimeout, BatchMode) from silently weakening the
+// fail-fast behaviour the remote workflow depends on. All other, non-conflicting
+// user options still apply.
 func (c *Connection) commonArgs() []string {
 	var args []string
 
@@ -73,7 +80,6 @@ func (c *Connection) commonArgs() []string {
 	if c.ProxyJump != "" {
 		args = append(args, "-J", c.ProxyJump)
 	}
-	args = append(args, c.SSHOptions...)
 
 	return args
 }
@@ -91,6 +97,10 @@ func (c *Connection) commonArgs() []string {
 // encrypted application-level ones.
 func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
+	// ccc's options precede the user's SSHOptions so they win OpenSSH's
+	// first-value-wins rule (see commonArgs): a user ssh_options entry can no
+	// longer disable BatchMode (which would hang on a prompt) or stretch the
+	// keepalive/connect bounds that make a flaky link fail fast.
 	args = append(args,
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
@@ -99,6 +109,7 @@ func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 		"-o", "ServerAliveCountMax=3",
 		"-o", "TCPKeepAlive=no",
 	)
+	args = append(args, c.SSHOptions...)
 	args = c.appendControlMaster(args)
 	return c.appendRemoteCmd(args, cmd)
 }
@@ -117,12 +128,17 @@ func (c *Connection) buildNonInteractiveArgs(cmd string) []string {
 // and only complicates teardown.
 func (c *Connection) buildInteractiveArgs(cmd string) []string {
 	args := c.commonArgs()
+	// ccc's keepalive options precede the user's SSHOptions (see commonArgs) so a
+	// configured ServerAlive cannot weaken the bound that tears down a dead PTY
+	// instead of freezing the terminal. -t must follow all -o options (ccc's and
+	// the user's) so ssh does not ignore them.
 	args = append(args,
 		"-o", "ServerAliveInterval=10",
 		"-o", "ServerAliveCountMax=3",
 		"-o", "TCPKeepAlive=no",
-		"-t",
 	)
+	args = append(args, c.SSHOptions...)
+	args = append(args, "-t")
 	return c.appendRemoteCmd(args, cmd)
 }
 
@@ -287,8 +303,20 @@ func (c *Connection) RunInteractive(cmd string) error {
 }
 
 // TestConnection verifies that the SSH connection works by running "echo ok".
+//
+// It is a thin wrapper over TestConnectionContext with a background context, so
+// existing callers are unchanged while the cancellable form is available to the
+// TUI connect path.
 func (c *Connection) TestConnection() error {
-	out, err := c.Run("echo ok")
+	return c.TestConnectionContext(context.Background())
+}
+
+// TestConnectionContext is the cancellable form of TestConnection: it runs the
+// "echo ok" probe through RunContext so an in-flight connect attempt can be
+// aborted when ctx is cancelled (the user pressed esc) or its deadline expires
+// (a dead link), instead of hanging on the kernel TCP timeout.
+func (c *Connection) TestConnectionContext(ctx context.Context) error {
+	out, err := c.RunContext(ctx, "echo ok")
 	if err != nil {
 		return fmt.Errorf("connection test failed: %w", err)
 	}

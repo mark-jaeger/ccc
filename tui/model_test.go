@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mark-jaeger/ccc/config"
@@ -667,12 +669,23 @@ func TestSessionExitedCleanResets(t *testing.T) {
 	}
 }
 
-// fakeRunner is a Runner stub for exercising remote-mode reconnect probes.
+// fakeRunner is a Runner stub for exercising remote-mode reconnect probes and
+// the cancelable load path. When blockOnCtx is set, RunContext blocks until the
+// context is done and then returns its error, emulating an ssh child that only
+// unblocks once its bounded context is cancelled or times out.
 type fakeRunner struct {
-	runErr error
+	runErr     error
+	blockOnCtx bool
 }
 
-func (f fakeRunner) Run(string) (string, error)  { return "", f.runErr }
+func (f fakeRunner) Run(string) (string, error) { return "", f.runErr }
+func (f fakeRunner) RunContext(ctx context.Context, _ string) (string, error) {
+	if f.blockOnCtx {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return "", f.runErr
+}
 func (f fakeRunner) RunInteractive(string) error { return nil }
 
 // TestErrorRecoveryInitializesList verifies that recovering from StateError when
@@ -781,5 +794,437 @@ func TestReconnectProbeStaleIgnored(t *testing.T) {
 
 	if cmd != nil {
 		t.Error("expected a stale probe result to be ignored (nil cmd)")
+	}
+}
+
+// TestEscCancelsConnecting verifies that esc on the connecting screen cancels the
+// in-flight connect (so a dead network unblocks instead of hanging), bumps the
+// request generation, and returns to a usable host-selection screen.
+// TestBeginRequestHasGenerousDeadline pins the backstop on a connect/load
+// request: a wall-clock cap that bounds an op that hangs after the transport is
+// up (a remote read wedged on a stalled mount, with ssh keepalives still ACKing
+// or weakened by user ssh_options), while being large enough never to abort a
+// legitimately slow op. The deadline must be present and approximately
+// requestTimeout out — a tight value here would regress to the original
+// false-abort bug.
+func TestBeginRequestHasGenerousDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginRequest()
+	dl, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("beginRequest context must carry a wall-clock backstop")
+	}
+	if remaining := time.Until(dl); remaining <= 30*time.Second || remaining > requestTimeout+time.Second {
+		t.Errorf("connect/load deadline should be ~%v out (generous, not tight), got %v", requestTimeout, remaining)
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+	if m.cancel == nil {
+		t.Error("beginRequest must retain a cancel func for esc/next-request to abort")
+	}
+	// The returned context must still be cancelable via the retained func.
+	m.cancel()
+	if ctx.Err() == nil {
+		t.Error("cancel func must cancel the returned context")
+	}
+}
+
+func TestEscCancelsConnecting(t *testing.T) {
+	m := New(false) // remote mode
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "h", Address: "1.2.3.4"}}
+	m.state = StateConnecting
+	canceled := false
+	m.cancel = func() { canceled = true }
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if !canceled {
+		t.Error("expected the in-flight connect context to be canceled")
+	}
+	if m.state != StateHostSelect {
+		t.Errorf("expected StateHostSelect, got %v", m.state)
+	}
+	if m.reqGen != prevGen+1 {
+		t.Errorf("expected reqGen bumped to %d, got %d", prevGen+1, m.reqGen)
+	}
+	// The destination list must be (re)initialized so rendering/updates don't
+	// panic on a zero-value list.Model.
+	_ = m.View()
+}
+
+// TestEscCancelsLoading verifies that esc on the loading screen cancels the
+// in-flight load, bumps the request generation, and steps back to project
+// selection (projects already loaded).
+func TestEscCancelsLoading(t *testing.T) {
+	m := New(false) // remote mode
+	m.width, m.height = 80, 24
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "p", Path: "/p"}}}
+	m.state = StateLoading
+	canceled := false
+	m.cancel = func() { canceled = true }
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if !canceled {
+		t.Error("expected the in-flight load context to be canceled")
+	}
+	if m.state != StateProjectSelect {
+		t.Errorf("expected StateProjectSelect, got %v", m.state)
+	}
+	if m.reqGen != prevGen+1 {
+		t.Errorf("expected reqGen bumped to %d, got %d", prevGen+1, m.reqGen)
+	}
+	_ = m.View()
+}
+
+// TestStaleHostConnectedIgnored verifies a hostConnectedMsg from a superseded
+// request generation is dropped (runner/state untouched), while a current-gen
+// one is applied.
+func TestStaleHostConnectedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 3
+	m.state = StateConnecting
+
+	// Stale: gen does not match reqGen.
+	nm, _ := m.Update(hostConnectedMsg{hostName: "h", host: config.Host{Name: "h"}, runner: fakeRunner{}, gen: 2})
+	m = nm.(Model)
+	if m.runner != nil {
+		t.Error("stale hostConnectedMsg must not set the runner")
+	}
+	if m.state != StateConnecting {
+		t.Errorf("stale hostConnectedMsg must not change state, got %v", m.state)
+	}
+
+	// Current: gen matches reqGen.
+	nm, _ = m.Update(hostConnectedMsg{hostName: "h", host: config.Host{Name: "h"}, runner: fakeRunner{}, gen: 3})
+	m = nm.(Model)
+	if m.runner == nil {
+		t.Error("current hostConnectedMsg should set the runner")
+	}
+	if m.state != StateLoading {
+		t.Errorf("current hostConnectedMsg should advance to StateLoading, got %v", m.state)
+	}
+}
+
+// TestStaleProjectsLoadedIgnored verifies a projectsLoadedMsg from a superseded
+// generation is dropped while a current-gen one is applied.
+func TestStaleProjectsLoadedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 5
+	m.state = StateLoading
+
+	stale := &config.ProjectsConfig{Projects: []config.Project{{Name: "stale"}}}
+	nm, _ := m.Update(projectsLoadedMsg{projects: stale, gen: 4})
+	m = nm.(Model)
+	if m.state != StateLoading {
+		t.Errorf("stale projectsLoadedMsg must not change state, got %v", m.state)
+	}
+	if m.projects != nil {
+		t.Error("stale projectsLoadedMsg must not set projects")
+	}
+
+	current := &config.ProjectsConfig{Projects: []config.Project{{Name: "p"}}}
+	nm, _ = m.Update(projectsLoadedMsg{projects: current, gen: 5})
+	m = nm.(Model)
+	if m.state != StateProjectSelect {
+		t.Errorf("current projectsLoadedMsg should advance to StateProjectSelect, got %v", m.state)
+	}
+	if m.projects != current {
+		t.Error("current projectsLoadedMsg should set projects")
+	}
+}
+
+// TestStaleSessionsLoadedIgnored verifies a sessionsLoadedMsg from a superseded
+// generation is dropped while a current-gen one is applied.
+func TestStaleSessionsLoadedIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.currentProjectKey = "proj"
+	m.reqGen = 9
+	m.state = StateLoading
+
+	nm, _ := m.Update(sessionsLoadedMsg{sessions: []zmx.Session{{Name: "ccc.proj.x"}}, gen: 8})
+	m = nm.(Model)
+	if m.state != StateLoading {
+		t.Errorf("stale sessionsLoadedMsg must not change state, got %v", m.state)
+	}
+	if m.sessions != nil {
+		t.Error("stale sessionsLoadedMsg must not set sessions")
+	}
+
+	nm, _ = m.Update(sessionsLoadedMsg{sessions: []zmx.Session{{Name: "ccc.proj.main"}}, gen: 9})
+	m = nm.(Model)
+	if m.state != StateSessionSelect {
+		t.Errorf("current sessionsLoadedMsg should advance to StateSessionSelect, got %v", m.state)
+	}
+}
+
+// TestStaleErrIgnored verifies an errMsg from a superseded request generation is
+// dropped instead of clobbering the screen with StateError.
+func TestStaleErrIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 4
+	m.state = StateLoading
+
+	nm, _ := m.Update(errMsg{err: fmt.Errorf("late failure"), gen: 3})
+	m = nm.(Model)
+	if m.state == StateError {
+		t.Error("stale errMsg must not switch to StateError")
+	}
+	if m.err != nil {
+		t.Errorf("stale errMsg must not set err, got %v", m.err)
+	}
+}
+
+// TestHostConnectClearsPreviousHostProjects verifies that binding a new host's
+// runner discards the previous host's project state. Otherwise a later esc
+// (whose StateLoading back-target keys off m.projects == nil) or a delayed
+// result could render the old host's projects against the new runner, and a
+// subsequent select/reorder/delete would write the wrong host's paths.
+func TestHostConnectClearsPreviousHostProjects(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.reqGen = 2
+	m.state = StateConnecting
+	// Stale state left over from a previous host (A).
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "A-proj", Path: "/a"}}}
+	m.currentProjectKey = "A-proj"
+	m.currentProjectPath = "/a"
+	m.selectedProject = "A-proj"
+
+	nm, _ := m.Update(hostConnectedMsg{hostName: "B", host: config.Host{Name: "B"}, runner: fakeRunner{}, gen: 2})
+	m = nm.(Model)
+
+	if m.projects != nil {
+		t.Error("connecting to a new host must clear the previous host's projects")
+	}
+	if m.currentProjectKey != "" || m.currentProjectPath != "" || m.selectedProject != "" {
+		t.Error("connecting to a new host must clear the previous host's project selection")
+	}
+	if m.state != StateLoading {
+		t.Errorf("expected StateLoading after connect, got %v", m.state)
+	}
+}
+
+// TestEscDuringFreshHostLoadReturnsToHostSelect covers the StateLoading
+// back-target when no projects have loaded yet (a fresh post-connect load):
+// esc must abandon the host and return to host selection, never to a project
+// list belonging to a different host.
+func TestEscDuringFreshHostLoadReturnsToHostSelect(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "A"}, {Name: "B"}}
+	m.SetHosts(m.hosts)
+	m.currentHost = &config.Host{Name: "B"}
+	m.runner = fakeRunner{}
+	m.projects = nil // freshly connected to B, B's projects not yet loaded
+	m.state = StateLoading
+	m.cancel = func() {}
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateHostSelect {
+		t.Errorf("esc during a fresh host's project load should return to host select, got %v", m.state)
+	}
+	if m.runner != nil {
+		t.Error("esc during a fresh host load should drop the runner")
+	}
+	_ = m.View()
+}
+
+// TestLeavingHostClearsProjectsAndBumpsEpoch verifies that backing out of a host
+// drops its project state and bumps the request epoch, so a save/load still in
+// flight for that host cannot clobber the next host's screen when it lands.
+func TestLeavingHostClearsProjectsAndBumpsEpoch(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.hosts = []config.Host{{Name: "A"}}
+	m.SetHosts(m.hosts)
+	m.currentHost = &config.Host{Name: "A"}
+	m.runner = fakeRunner{}
+	m.projects = &config.ProjectsConfig{Projects: []config.Project{{Name: "A-proj"}}}
+	m.SetProjects(m.projects.Projects)
+	m.state = StateProjectSelect
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateHostSelect {
+		t.Fatalf("esc from project select should go to host select, got %v", m.state)
+	}
+	if m.projects != nil {
+		t.Error("leaving the host must clear its projects")
+	}
+	if m.runner != nil {
+		t.Error("leaving the host must drop the runner")
+	}
+	if m.reqGen == prevGen {
+		t.Error("leaving the host must bump the request epoch to invalidate pending saves")
+	}
+	_ = m.View()
+}
+
+// TestSaveProjectsCmdTagsResultWithGen verifies the save reload carries the
+// request epoch it was given, so a late save landing after the user has
+// navigated away is recognised as stale (gen != reqGen) and dropped instead of
+// clobbering the current screen. Previously the reload was emitted with gen 0,
+// which always bypasses the stale guard.
+func TestSaveProjectsCmdTagsResultWithGen(t *testing.T) {
+	projects := &config.ProjectsConfig{Projects: []config.Project{{Name: "p", Path: "/p"}}}
+
+	msg := saveProjectsCmd(7, fakeRunner{}, projects)()
+	pl, ok := msg.(projectsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected projectsLoadedMsg, got %T", msg)
+	}
+	if pl.gen != 7 {
+		t.Errorf("save reload should carry the request gen 7, got %d", pl.gen)
+	}
+
+	// A save that fails mid-flight must tag its error with the same epoch.
+	errMsgResult := saveProjectsCmd(9, fakeRunner{runErr: fmt.Errorf("boom")}, projects)()
+	em, ok := errMsgResult.(errMsg)
+	if !ok {
+		t.Fatalf("expected errMsg on save failure, got %T", errMsgResult)
+	}
+	if em.gen != 9 {
+		t.Errorf("save error should carry the request gen 9, got %d", em.gen)
+	}
+}
+
+// TestBeginScanRequestHasDeadline pins the larger backstop for a scan — the
+// long-running filesystem walk that warrants more headroom than a point read.
+func TestBeginScanRequestHasDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginScanRequest()
+	dl, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("beginScanRequest context must carry a deadline backstop")
+	}
+	if remaining := time.Until(dl); remaining <= requestTimeout || remaining > scanTimeout+time.Second {
+		t.Errorf("scan deadline should be ~%v out (larger than the connect/load %v), got %v", scanTimeout, requestTimeout, remaining)
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+}
+
+// TestBeginConnectRequestHasNoDeadline pins that a host connect uses a
+// cancel-only context. A wall-clock budget shared across the primary + fallback
+// walk could expire mid-walk and skip a reachable later fallback; each address
+// is already bounded by ssh's (enforced) ConnectTimeout and esc aborts the walk,
+// so no cap is imposed here. Reintroducing a deadline fails this test.
+func TestBeginConnectRequestHasNoDeadline(t *testing.T) {
+	m := New(false)
+	ctx, gen := m.beginConnectRequest()
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("beginConnectRequest must have no wall-clock deadline (it would cut the fallback walk short)")
+	}
+	if gen != 1 {
+		t.Errorf("first request generation should be 1, got %d", gen)
+	}
+	if m.cancel == nil {
+		t.Error("beginConnectRequest must retain a cancel func so esc aborts the walk")
+	}
+}
+
+// TestStaleSessionKilledIgnored verifies a kill that completes after the user
+// left the session screen (epoch bumped) does not start a session reload.
+func TestStaleSessionKilledIgnored(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = fakeRunner{}
+	m.currentProjectKey = "proj"
+	m.reqGen = 5
+	m.state = StateSessionSelect
+
+	_, cmd := m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 4})
+	if cmd != nil {
+		t.Error("stale sessionKilledMsg must not trigger a session reload")
+	}
+
+	// A current-gen kill should reload.
+	_, cmd = m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 5})
+	if cmd == nil {
+		t.Error("current-gen sessionKilledMsg should reload sessions")
+	}
+}
+
+// TestSessionKilledNilRunnerDropped guards the crash codex flagged: a kill that
+// lands once leave-host has nil'd the runner must not dial a nil Runner. Even
+// with the epoch unbumped (gen still current), the nil-runner guard drops it.
+func TestSessionKilledNilRunnerDropped(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = nil // navigated back to host select
+	m.reqGen = 7
+	m.state = StateHostSelect
+
+	_, cmd := m.Update(sessionKilledMsg{name: "ccc.proj.x", gen: 7})
+	if cmd != nil {
+		t.Error("sessionKilledMsg with a nil runner must not start a reload (would panic on a nil Runner)")
+	}
+}
+
+// TestLeavingSessionScreenBumpsEpoch verifies backing out of the session list
+// bumps the request epoch so a pending kill/load completion is invalidated.
+func TestLeavingSessionScreenBumpsEpoch(t *testing.T) {
+	m := New(false)
+	m.width, m.height = 80, 24
+	m.runner = fakeRunner{}
+	m.currentProjectKey = "proj"
+	m.currentProjectPath = "/proj"
+	m.SetSessions([]zmx.Session{{Name: "ccc.proj.main"}}, "proj")
+	m.state = StateSessionSelect
+	prevGen := m.reqGen
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = nm.(Model)
+
+	if m.state != StateProjectSelect {
+		t.Fatalf("esc from session select should go to project select, got %v", m.state)
+	}
+	if m.reqGen == prevGen {
+		t.Error("leaving the session screen must bump the epoch to invalidate a pending kill/load")
+	}
+}
+
+// TestSaveProjectsCmdSnapshotsConfig verifies the save serializes a snapshot
+// taken at schedule time, not the live config the UI thread keeps mutating —
+// closing the data race of handing a shared *config.ProjectsConfig to a
+// background goroutine.
+func TestSaveProjectsCmdSnapshotsConfig(t *testing.T) {
+	projects := &config.ProjectsConfig{Projects: []config.Project{{Name: "a", Path: "/a"}, {Name: "b", Path: "/b"}}}
+
+	cmd := saveProjectsCmd(3, fakeRunner{}, projects)
+	// Mutate the original after scheduling, as a concurrent reorder/scan would.
+	projects.Projects[0], projects.Projects[1] = projects.Projects[1], projects.Projects[0]
+	projects.Projects = append(projects.Projects, config.Project{Name: "c", Path: "/c"})
+
+	msg := cmd()
+	pl, ok := msg.(projectsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected projectsLoadedMsg, got %T", msg)
+	}
+	if len(pl.projects.Projects) != 2 {
+		t.Fatalf("snapshot should hold the 2 projects present at schedule time, got %d", len(pl.projects.Projects))
+	}
+	if pl.projects.Projects[0].Name != "a" || pl.projects.Projects[1].Name != "b" {
+		t.Errorf("snapshot order should be [a b] as scheduled, got [%s %s]",
+			pl.projects.Projects[0].Name, pl.projects.Projects[1].Name)
+	}
+	if pl.projects == projects {
+		t.Error("reload must carry the detached snapshot, not the live pointer")
 	}
 }

@@ -10,21 +10,31 @@ type hostsLoadedMsg struct {
 	hosts []config.Host
 }
 
-// hostConnectedMsg is sent when SSH connection is established.
+// hostConnectedMsg is sent when SSH connection is established. gen is the
+// request epoch (reqGen) the connect was fired in; the model drops a message
+// whose gen no longer matches reqGen so a late result from a canceled or
+// superseded connect cannot clobber the screen. A gen of 0 is treated as
+// unguarded (legacy/startup paths) and always applies.
 type hostConnectedMsg struct {
 	hostName string
 	host     config.Host
 	runner   Runner // the SSH connection as a Runner
+	gen      int
 }
 
-// projectsLoadedMsg is sent when projects are loaded from remote.
+// projectsLoadedMsg is sent when projects are loaded. gen ties the result to its
+// request epoch for the stale-result guard (see hostConnectedMsg); gen 0 is
+// unguarded (e.g. the post-scan save reload and the local startup load).
 type projectsLoadedMsg struct {
 	projects *config.ProjectsConfig
+	gen      int
 }
 
-// sessionsLoadedMsg is sent when zmx sessions are listed.
+// sessionsLoadedMsg is sent when zmx sessions are listed. gen ties the result to
+// its request epoch for the stale-result guard.
 type sessionsLoadedMsg struct {
 	sessions []zmx.Session
+	gen      int
 }
 
 // sessionExitedMsg is sent when zmx attach exits.
@@ -56,14 +66,20 @@ type sessionCreatedMsg struct {
 	name string
 }
 
-// sessionKilledMsg is sent when a session is killed.
+// sessionKilledMsg is sent when a session is killed. gen ties the kill to the
+// request epoch it was issued in so a kill that completes after the user has
+// left the session screen (or the host) is recognised as stale and does not
+// trigger a reload against a now-nil runner or the wrong host's context.
 type sessionKilledMsg struct {
 	name string
+	gen  int
 }
 
-// scanCompleteMsg is sent when project scanning completes.
+// scanCompleteMsg is sent when project scanning completes. gen ties the result
+// to its request epoch for the stale-result guard.
 type scanCompleteMsg struct {
 	results []scanResult
+	gen     int
 }
 
 // scanResult represents a discovered project from scanning.
@@ -77,12 +93,22 @@ type projectDeletedMsg struct {
 	key string
 }
 
-// zmxAvailableMsg is sent when zmx is confirmed installed.
-type zmxAvailableMsg struct{}
+// zmxAvailableMsg is sent when zmx is confirmed installed. gen ties the result
+// to its request epoch so a late check from a canceled connect is dropped rather
+// than driving a project load against a host the user already navigated away
+// from. gen 0 is unguarded (local startup check).
+type zmxAvailableMsg struct {
+	gen int
+}
 
-// errMsg wraps errors for display.
+// errMsg wraps errors for display. gen ties an error to the cancelable
+// connect/load/scan request that produced it, so a failure from a canceled or
+// superseded operation is dropped instead of clobbering the screen with
+// StateError. gen 0 marks an unguarded error (saves, kills, the zmx-not-found
+// install message, startup) that always applies.
 type errMsg struct {
 	err error
+	gen int
 }
 
 func (e errMsg) Error() string { return e.err.Error() }
