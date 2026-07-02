@@ -48,6 +48,18 @@ type Session struct {
 	External  bool   // true if not prefixed with "ccc."
 }
 
+// DisplayName returns a human-readable session name for the UI. For ccc
+// sessions it reconstructs "ccc.{project}.{suffix}" from the *decoded* project
+// key, so a percent-encoded project segment (e.g. "projects%2Ftmp") is shown in
+// its original form ("projects/tmp") rather than leaking the on-disk encoding.
+// External sessions (and any that failed to parse) are shown verbatim.
+func (s Session) DisplayName() string {
+	if s.External {
+		return s.Name
+	}
+	return "ccc." + s.Project + "." + s.Suffix
+}
+
 // zmxDirPrefix sets ZMX_DIR to a consistent path so that SSH sessions
 // (where XDG_RUNTIME_DIR is unset) and local sessions (where systemd sets
 // XDG_RUNTIME_DIR=/run/user/$UID) use the same socket directory.
@@ -166,9 +178,84 @@ func parseListLine(line string) (Session, bool) {
 	return s, true
 }
 
+// A ccc session name is "ccc.{project}.{suffix}", and zmx uses that name
+// verbatim as (a) a socket *filename* under ZMX_DIR and (b) the identifier it is
+// addressed by. Two characters are therefore fatal in the project segment: '/'
+// (a path separator — a session named "ccc.a/b.main" makes zmx try to create a
+// socket under a non-existent "ccc.a/" subdirectory and exit 1) and '.' (the
+// delimiter parseSessionName splits on to recover project and suffix). Project
+// keys are arbitrary user/scan-supplied strings, so the project segment is
+// percent-encoded on the way in and decoded on the way out. The encoding is
+// reversible and collision-free, so distinct keys never share a session (a naive
+// '/'→'-' would fold "a/b" and "a-b" together) and Session.Project round-trips
+// back to the exact original key that FilterSessionsForProject compares against.
+// Keys with none of these characters encode to themselves, so existing sessions
+// are unaffected.
+//
+// encodeProjectToken escapes '%' first so the '%' introduced by the other
+// replacements is never itself re-decoded.
+func encodeProjectToken(key string) string {
+	var b strings.Builder
+	b.Grow(len(key))
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '%':
+			b.WriteString("%25")
+		case '/':
+			b.WriteString("%2F")
+		case '.':
+			b.WriteString("%2E")
+		default:
+			b.WriteByte(key[i])
+		}
+	}
+	return b.String()
+}
+
+// decodeProjectToken is the inverse of encodeProjectToken. Only the three
+// sequences encodeProjectToken emits are recognised; every other byte (including
+// a lone '%') passes through unchanged, which is safe because a genuine '%' in
+// the original key was itself encoded to "%25".
+func decodeProjectToken(tok string) string {
+	if !strings.Contains(tok, "%") {
+		return tok
+	}
+	var b strings.Builder
+	b.Grow(len(tok))
+	for i := 0; i < len(tok); i++ {
+		if tok[i] == '%' && i+2 < len(tok) {
+			switch tok[i : i+3] {
+			case "%25":
+				b.WriteByte('%')
+				i += 2
+				continue
+			case "%2F":
+				b.WriteByte('/')
+				i += 2
+				continue
+			case "%2E":
+				b.WriteByte('.')
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(tok[i])
+	}
+	return b.String()
+}
+
+// SessionName builds the canonical ccc session name for a project/suffix pair,
+// percent-encoding the project key so arbitrary project names survive being used
+// as a zmx socket filename and being parsed back out (see encodeProjectToken).
+// The suffix is embedded verbatim; callers are responsible for keeping it free
+// of the structural '.' delimiter and the '/' path separator.
+func SessionName(projectKey, suffix string) string {
+	return "ccc." + encodeProjectToken(projectKey) + "." + suffix
+}
+
 // parseSessionName extracts project and suffix from a session name.
-// Format: ccc.{project}.{suffix}
-// Non-ccc sessions are marked as External.
+// Format: ccc.{project}.{suffix}, where {project} is percent-encoded (see
+// SessionName). Non-ccc sessions are marked as External.
 func parseSessionName(name string) Session {
 	if !strings.HasPrefix(name, "ccc.") {
 		return Session{Name: name, External: true}
@@ -181,7 +268,7 @@ func parseSessionName(name string) Session {
 
 	return Session{
 		Name:    name,
-		Project: parts[0],
+		Project: decodeProjectToken(parts[0]),
 		Suffix:  parts[1],
 	}
 }
@@ -201,12 +288,10 @@ func FilterSessionsForProject(sessions []Session, projectKey string) []Session {
 
 // NextAutoName returns the next session name for a project.
 // The first session gets suffix "main", subsequent sessions get 2, 3, 4...
-// Format: ccc.{project}.{suffix}
+// The project key is percent-encoded into the name via SessionName.
 func NextAutoName(projectKey string, existing []Session) string {
-	prefix := "ccc." + projectKey + "."
-
 	if len(existing) == 0 {
-		return prefix + "main"
+		return SessionName(projectKey, "main")
 	}
 
 	// Check if "main" suffix already exists
@@ -222,8 +307,8 @@ func NextAutoName(projectKey string, existing []Session) string {
 	}
 
 	if !hasMain {
-		return prefix + "main"
+		return SessionName(projectKey, "main")
 	}
 
-	return prefix + strconv.Itoa(maxNum+1)
+	return SessionName(projectKey, strconv.Itoa(maxNum+1))
 }

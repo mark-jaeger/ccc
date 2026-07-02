@@ -710,9 +710,16 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			suffix := strings.TrimSpace(m.sessionNameInput.Value())
 
-			// Validate suffix
+			// Validate suffix. The suffix is embedded verbatim in the session
+			// name (the project key is encoded, the suffix is not), so it must
+			// avoid the structural '.' delimiter and the '/' path separator that
+			// would break zmx's socket filename.
 			if strings.Contains(suffix, ".") {
 				m.sessionNameInputErr = "suffix cannot contain dots"
+				return m, nil
+			}
+			if strings.Contains(suffix, "/") {
+				m.sessionNameInputErr = "suffix cannot contain slashes"
 				return m, nil
 			}
 			if strings.ContainsAny(suffix, " \t\n\r") {
@@ -720,12 +727,14 @@ func (m Model) updateSessionNameInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Build session name
+			// Build session name. SessionName percent-encodes the project key so
+			// arbitrary project names (with '/', '.', etc.) yield a valid zmx
+			// socket filename.
 			var name string
 			if suffix == "" {
 				name = zmx.NextAutoName(m.currentProjectKey, m.sessions)
 			} else {
-				name = "ccc." + m.currentProjectKey + "." + suffix
+				name = zmx.SessionName(m.currentProjectKey, suffix)
 			}
 
 			// Check for conflicts
