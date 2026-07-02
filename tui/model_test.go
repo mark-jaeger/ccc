@@ -669,6 +669,101 @@ func TestSessionExitedCleanResets(t *testing.T) {
 	}
 }
 
+// TestDetachEscMovesUpToProjectList verifies the two ways a user reaches a
+// project's session list both let esc walk back up to the project list:
+//   - just navigated there (ProjectSelect -> Enter -> session list), and
+//   - just detached a session and moved up the hierarchy.
+//
+// The detach case is the regression: a clean exit refreshes sessions through
+// StateLoading, and esc during that reload window (or after it lands on the
+// session list) must return to the project list rather than being swallowed.
+func TestDetachEscMovesUpToProjectList(t *testing.T) {
+	newSessionModel := func() Model {
+		m := New(true) // local mode: no runner needed for the reload command
+		m.width, m.height = 80, 24
+		m.currentProjectKey = "proj"
+		m.selectedProject = "proj"
+		m.SetSessions([]zmx.Session{{Name: "ccc.proj.main", Project: "proj", Suffix: "main"}}, "proj")
+		m.state = StateSessionSelect
+		return m
+	}
+
+	esc := func(m Model) Model {
+		nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		return nm.(Model)
+	}
+
+	t.Run("just navigated there", func(t *testing.T) {
+		m := esc(newSessionModel())
+		if m.state != StateProjectSelect {
+			t.Fatalf("expected StateProjectSelect, got %v", m.state)
+		}
+	})
+
+	t.Run("clean detach routes reload through StateLoading", func(t *testing.T) {
+		m := newSessionModel()
+		nm, cmd := m.Update(sessionExitedMsg{err: nil})
+		m = nm.(Model)
+		if m.state != StateLoading {
+			t.Fatalf("expected detach to enter StateLoading, got %v", m.state)
+		}
+		if cmd == nil {
+			t.Error("expected a session-refresh command")
+		}
+	})
+
+	t.Run("esc during the post-detach reload window", func(t *testing.T) {
+		m := newSessionModel()
+		nm, _ := m.Update(sessionExitedMsg{err: nil})
+		m = esc(nm.(Model))
+		if m.state != StateProjectSelect {
+			t.Fatalf("expected esc mid-reload to reach StateProjectSelect, got %v", m.state)
+		}
+	})
+
+	t.Run("esc after the reload lands on the session list", func(t *testing.T) {
+		m := newSessionModel()
+		nm, _ := m.Update(sessionExitedMsg{err: nil})
+		m = nm.(Model)
+		nm, _ = m.Update(sessionsLoadedMsg{
+			sessions: []zmx.Session{{Name: "ccc.proj.main", Project: "proj", Suffix: "main"}},
+			gen:      m.reqGen,
+		})
+		m = esc(nm.(Model))
+		if m.state != StateProjectSelect {
+			t.Fatalf("expected esc after reload to reach StateProjectSelect, got %v", m.state)
+		}
+	})
+}
+
+// TestDetachFromCreatedSessionEscToProject is the specific regression: when a
+// session is created and attached, the attach is fired from StateCreatingSession
+// (not StateSessionSelect). A clean detach must not strand the model in
+// StateCreatingSession — a state with no View and no handleBack case, where the
+// screen is blank and esc is silently swallowed. The clean-exit reload must move
+// it to StateLoading so esc still walks up to the project list.
+func TestDetachFromCreatedSessionEscToProject(t *testing.T) {
+	m := New(true) // local mode
+	m.width, m.height = 80, 24
+	m.currentProjectKey = "proj"
+	m.selectedProject = "proj"
+	m.state = StateCreatingSession // attach was fired from the create flow
+
+	nm, _ := m.Update(sessionExitedMsg{err: nil})
+	m = nm.(Model)
+	if m.state == StateCreatingSession {
+		t.Fatal("detach left the model stranded in StateCreatingSession (esc would be swallowed)")
+	}
+	if m.state != StateLoading {
+		t.Fatalf("expected StateLoading after detach, got %v", m.state)
+	}
+
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	if got := nm.(Model).state; got != StateProjectSelect {
+		t.Fatalf("expected esc to reach StateProjectSelect, got %v", got)
+	}
+}
+
 // fakeRunner is a Runner stub for exercising remote-mode reconnect probes and
 // the cancelable load path. When blockOnCtx is set, RunContext blocks until the
 // context is done and then returns its error, emulating an ssh child that only

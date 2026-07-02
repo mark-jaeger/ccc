@@ -42,8 +42,8 @@ type SessionItem struct {
 	session zmx.Session
 }
 
-// Title returns the session name.
-func (i SessionItem) Title() string { return i.session.Name }
+// Title returns the human-readable session name (decoded; see DisplayName).
+func (i SessionItem) Title() string { return i.session.DisplayName() }
 
 // Description returns session status information.
 func (i SessionItem) Description() string {
@@ -56,8 +56,9 @@ func (i SessionItem) Description() string {
 	return "detached"
 }
 
-// FilterValue returns the session name for fuzzy filtering.
-func (i SessionItem) FilterValue() string { return i.session.Name }
+// FilterValue returns the human-readable session name for fuzzy filtering, so
+// users filter by what they see rather than the on-disk encoded name.
+func (i SessionItem) FilterValue() string { return i.session.DisplayName() }
 
 // Helper constructors
 

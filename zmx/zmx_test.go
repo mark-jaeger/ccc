@@ -391,3 +391,131 @@ func TestNextAutoName_NoMain(t *testing.T) {
 		t.Errorf("NextAutoName() = %q, want %q", got, want)
 	}
 }
+
+// TestSessionNameEncodesProjectKey verifies arbitrary project keys are encoded
+// into a session name that zmx can use as a socket filename. The key guarantee
+// is that a '/' in the project key never reaches the name (a '/' there makes zmx
+// exit 1 trying to create a socket under a non-existent subdirectory), and that
+// the structural '.' delimiter is likewise escaped.
+func TestSessionNameEncodesProjectKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		project string
+		suffix  string
+		want    string
+	}{
+		{"plain key unchanged", "rt1", "main", "ccc.rt1.main"},
+		{"slash encoded", "projects/tmp", "main", "ccc.projects%2Ftmp.main"},
+		{"dot encoded", "a.b", "main", "ccc.a%2Eb.main"},
+		{"percent encoded", "50%", "main", "ccc.50%25.main"},
+		{"combined", "a/b.c%d", "2", "ccc.a%2Fb%2Ec%25d.2"},
+		{"hyphen workaround stays distinct", "projects-tmp", "main", "ccc.projects-tmp.main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SessionName(tt.project, tt.suffix)
+			if got != tt.want {
+				t.Errorf("SessionName(%q, %q) = %q, want %q", tt.project, tt.suffix, got, tt.want)
+			}
+			if strings.Contains(got, "/") {
+				t.Errorf("SessionName(%q, %q) = %q contains '/', which breaks zmx socket creation", tt.project, tt.suffix, got)
+			}
+		})
+	}
+}
+
+// TestSessionNameRoundTrip verifies that SessionName and parseSessionName are
+// inverses for arbitrary project keys: Session.Project must equal the original
+// key so FilterSessionsForProject (which compares against the raw key) still
+// groups sessions under the right project, and distinct keys must never collide.
+func TestSessionNameRoundTrip(t *testing.T) {
+	keys := []string{
+		"rt1",
+		"projects/tmp",
+		"projects-tmp", // the user's workaround: must stay distinct from projects/tmp
+		"a.b.c",
+		"weird %2F literal",
+		"deep/nested/path",
+		"unicode-café/项目",
+	}
+	seen := map[string]string{} // encoded name -> original key, to catch collisions
+	for _, k := range keys {
+		name := SessionName(k, "main")
+		if strings.Contains(name, "/") {
+			t.Errorf("SessionName(%q) = %q contains '/'", k, name)
+		}
+		if prev, ok := seen[name]; ok && prev != k {
+			t.Errorf("collision: keys %q and %q both encode to %q", prev, k, name)
+		}
+		seen[name] = k
+
+		s := parseSessionName(name)
+		if s.External {
+			t.Errorf("parseSessionName(%q) marked External", name)
+		}
+		if s.Project != k {
+			t.Errorf("round-trip project = %q, want %q (name %q)", s.Project, k, name)
+		}
+		if s.Suffix != "main" {
+			t.Errorf("round-trip suffix = %q, want %q (name %q)", s.Suffix, "main", name)
+		}
+	}
+}
+
+// TestDisplayName verifies the UI name is the decoded form for ccc sessions and
+// verbatim for external ones, and that a plain (unencoded) name is unchanged.
+func TestDisplayName(t *testing.T) {
+	tests := []struct {
+		name string
+		sess Session
+		want string
+	}{
+		{"plain ccc", parseSessionName("ccc.rt1.main"), "ccc.rt1.main"},
+		{"encoded ccc decodes", parseSessionName(SessionName("projects/tmp", "main")), "ccc.projects/tmp.main"},
+		{"external verbatim", parseSessionName("some-external"), "some-external"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.sess.DisplayName(); got != tt.want {
+				t.Errorf("DisplayName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNextAutoNameEncodesProjectKey verifies the auto-name path (used by both the
+// TUI and the CLI flow) also encodes the project key.
+func TestNextAutoNameEncodesProjectKey(t *testing.T) {
+	got := NextAutoName("projects/tmp", nil)
+	want := "ccc.projects%2Ftmp.main"
+	if got != want {
+		t.Errorf("NextAutoName(%q) = %q, want %q", "projects/tmp", got, want)
+	}
+	if strings.Contains(got, "/") {
+		t.Errorf("NextAutoName(%q) = %q contains '/'", "projects/tmp", got)
+	}
+}
+
+// TestEncodeDecodeProjectTokenRoundTrip exercises the token codec directly,
+// including a key that already contains a literal percent-escape sequence.
+func TestEncodeDecodeProjectTokenRoundTrip(t *testing.T) {
+	inputs := []string{
+		"",
+		"plain",
+		"/",
+		".",
+		"%",
+		"%2F",   // literal, must not be mistaken for an encoded slash
+		"a/b.c", // combined
+		"trailing%",
+	}
+	for _, in := range inputs {
+		enc := encodeProjectToken(in)
+		if strings.ContainsAny(enc, "/.") {
+			t.Errorf("encodeProjectToken(%q) = %q still contains '/' or '.'", in, enc)
+		}
+		if dec := decodeProjectToken(enc); dec != in {
+			t.Errorf("round-trip failed: %q -> %q -> %q", in, enc, dec)
+		}
+	}
+}
