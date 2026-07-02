@@ -354,11 +354,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = StateError
 			return m, nil
 		}
-		// Clean exit: reset the retry counter and refresh sessions. Bump the
-		// reconnect epoch so any tick still in flight from a prior drop is ignored,
-		// and open a fresh request epoch for the (cancelable) session reload.
+		// Clean exit (detach or session end): reset the retry counter and refresh
+		// sessions. Bump the reconnect epoch so any tick still in flight from a
+		// prior drop is ignored, and open a fresh request epoch for the
+		// (cancelable) session reload.
+		//
+		// Route the reload through StateLoading, the same gateway the forward
+		// project->session path uses. The attach may have been fired from
+		// StateSessionSelect (attach existing) *or* StateCreatingSession (create
+		// then attach); leaving the state untouched would strand a post-create
+		// detach in StateCreatingSession — a state with no View and no handleBack
+		// case, so the screen would be blank and esc silently swallowed until the
+		// reload landed. StateLoading is renderable, shows the esc-cancel hint, and
+		// its handleBack walks up to the project list, so esc reliably moves up the
+		// hierarchy during the reload window regardless of where the attach began.
 		m.reconnectAttempts = 0
 		m.reconnectGen++
+		m.state = StateLoading
 		ctx, gen := m.beginRequest()
 		if m.isLocal {
 			return m, loadSessionsLocalCmd(gen, m.currentProjectKey)
