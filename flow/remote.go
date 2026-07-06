@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/internal/shellutil"
-	sshpkg "github.com/mark-jaeger/ccc/ssh"
-	"github.com/mark-jaeger/ccc/ui"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/internal/shellutil"
+	sshpkg "github.com/mark-jaeger/ccc/v2/ssh"
+	"github.com/mark-jaeger/ccc/v2/ui"
 )
 
 // Deprecated: RunRemoteMode is replaced by tui.Run(false).

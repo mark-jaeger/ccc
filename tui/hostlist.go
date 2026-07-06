@@ -3,7 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/v2/config"
 )
 
 // NewHostList creates a list model for host selection.

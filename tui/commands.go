@@ -10,11 +10,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/scan"
-	"github.com/mark-jaeger/ccc/ssh"
-	"github.com/mark-jaeger/ccc/transport"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/scan"
+	"github.com/mark-jaeger/ccc/v2/ssh"
+	"github.com/mark-jaeger/ccc/v2/transport"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // saveHostsCmd saves the host list to the local config file.

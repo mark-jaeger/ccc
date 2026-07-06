@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/ssh"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/ssh"
 )
 
 // fakeTest builds a test func for selectWorkingConnection that succeeds only

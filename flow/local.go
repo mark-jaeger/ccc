@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/v2/config"
 )
 
 // LocalRunner executes commands directly on the local machine.

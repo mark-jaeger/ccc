@@ -10,8 +10,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // exitError255 returns a real *exec.ExitError with code 255, used to simulate

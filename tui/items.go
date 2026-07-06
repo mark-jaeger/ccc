@@ -3,8 +3,8 @@ package tui
 import (
 	"fmt"
 
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // HostItem wraps a host name and config.Host for the list component.

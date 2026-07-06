@@ -14,8 +14,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // Model is the main application model.

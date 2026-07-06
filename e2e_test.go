@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark-jaeger/ccc/internal/testutil"
+	"github.com/mark-jaeger/ccc/v2/internal/testutil"
 )
 
 func setupE2EHome(t *testing.T) string {

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/flow"
-	"github.com/mark-jaeger/ccc/internal/testutil"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/flow"
+	"github.com/mark-jaeger/ccc/v2/internal/testutil"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // slowReader wraps an io.Reader and returns at most one byte per Read call.

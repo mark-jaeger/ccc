@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mark-jaeger/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/v2/internal/shellutil"
 )
 
 // InstallMessage is the canonical, user-facing instruction shown when zmx is

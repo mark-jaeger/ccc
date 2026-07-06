@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // CheckZmx verifies zmx is available. If not, shows install instructions
