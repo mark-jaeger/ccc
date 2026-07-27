@@ -14,8 +14,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // Model is the main application model.
@@ -222,13 +222,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// While text entry is active (session-name input or list filtering),
+		// printable keys like 'q' and '?' are input, not commands: only ctrl+c
+		// quits and the help toggle is suppressed.
+		textEntry := m.state == StateSessionNameInput || m.isFiltering()
+
 		// Global quit
-		if key.Matches(msg, m.keys.Quit) {
+		if key.Matches(msg, m.keys.Quit) && (!textEntry || msg.String() == "ctrl+c") {
 			return m, tea.Quit
 		}
 
 		// Toggle help view
-		if key.Matches(msg, m.keys.Help) {
+		if key.Matches(msg, m.keys.Help) && !textEntry {
 			if m.showHelp {
 				m.showHelp = false
 				m.state = m.prevState

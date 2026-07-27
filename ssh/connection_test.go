@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/v2/config"
 )
 
 func TestBuildNonInteractiveArgs(t *testing.T) {

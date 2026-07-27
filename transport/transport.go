@@ -21,7 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mark-jaeger/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/v2/internal/shellutil"
 )
 
 // ErrUseSSH signals that the caller should fall back to the existing

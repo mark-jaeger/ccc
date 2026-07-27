@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mark-jaeger/ccc/config"
-	sshpkg "github.com/mark-jaeger/ccc/ssh"
-	"github.com/mark-jaeger/ccc/tailscale"
-	"github.com/mark-jaeger/ccc/ui"
+	"github.com/mark-jaeger/ccc/v2/config"
+	sshpkg "github.com/mark-jaeger/ccc/v2/ssh"
+	"github.com/mark-jaeger/ccc/v2/tailscale"
+	"github.com/mark-jaeger/ccc/v2/ui"
 )
 
 // SetupFirstHost walks through adding the first host.

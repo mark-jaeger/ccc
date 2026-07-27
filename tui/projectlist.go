@@ -2,7 +2,7 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/v2/config"
 )
 
 // NewProjectList creates a list model for project selection.

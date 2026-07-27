@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mark-jaeger/ccc/config"
+	"github.com/mark-jaeger/ccc/v2/config"
 )
 
 // Run starts the TUI application.

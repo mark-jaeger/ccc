@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // hostsLoadedMsg is sent when hosts are loaded from config.

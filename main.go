@@ -6,9 +6,9 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/mark-jaeger/ccc/flow"
-	"github.com/mark-jaeger/ccc/tui"
-	"github.com/mark-jaeger/ccc/zmx"
+	"github.com/mark-jaeger/ccc/v2/flow"
+	"github.com/mark-jaeger/ccc/v2/tui"
+	"github.com/mark-jaeger/ccc/v2/zmx"
 )
 
 // version is set at build time via ldflags; defaults to "dev" for local builds.

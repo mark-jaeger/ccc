@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mark-jaeger/ccc/config"
-	"github.com/mark-jaeger/ccc/internal/shellutil"
+	"github.com/mark-jaeger/ccc/v2/config"
+	"github.com/mark-jaeger/ccc/v2/internal/shellutil"
 )
 
 // execCommandContext is a seam over exec.CommandContext so tests can substitute

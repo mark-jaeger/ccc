@@ -19,7 +19,7 @@ Grab the latest release from [GitHub Releases](https://github.com/mark-jaeger/cc
 Requires Go 1.25+:
 
 ```bash
-go install github.com/mark-jaeger/ccc@latest
+go install github.com/mark-jaeger/ccc/v2@latest
 ```
 
 ## Usage
