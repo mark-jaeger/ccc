@@ -1323,3 +1323,73 @@ func TestSaveProjectsCmdSnapshotsConfig(t *testing.T) {
 		t.Error("reload must carry the detached snapshot, not the live pointer")
 	}
 }
+
+// TestSessionNameInputTypingIsNotCommands is the regression for the "ccc
+// crashes while typing a session name" report: the global Quit ('q') and Help
+// ('?') bindings fired on every KeyMsg, so typing a suffix containing 'q'
+// exited the TUI mid-typing. While the name input (or a list filter) is
+// active, printable keys must reach the text input; only ctrl+c quits.
+func TestSessionNameInputTypingIsNotCommands(t *testing.T) {
+	newInputModel := func() Model {
+		m := New(true)
+		m.width, m.height = 80, 24
+		m.currentProjectKey = "crawler"
+		m.SetSessions([]zmx.Session{{Name: "ccc.crawler.main", Project: "crawler", Suffix: "main"}}, "crawler")
+		m.state = StateSessionSelect
+		nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+		return nm.(Model)
+	}
+
+	t.Run("typing q and ? goes into the input", func(t *testing.T) {
+		m := newInputModel()
+		if m.state != StateSessionNameInput {
+			t.Fatalf("expected StateSessionNameInput, got %v", m.state)
+		}
+		for _, r := range "quick?" {
+			nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = nm.(Model)
+			if cmd != nil && cmd() == tea.Quit() {
+				t.Fatalf("typing %q quit the TUI", r)
+			}
+		}
+		if m.state != StateSessionNameInput {
+			t.Fatalf("typing left StateSessionNameInput for %v", m.state)
+		}
+		if got := m.sessionNameInput.Value(); got != "quick?" {
+			t.Errorf("expected input value %q, got %q", "quick?", got)
+		}
+	})
+
+	t.Run("ctrl+c still quits", func(t *testing.T) {
+		m := newInputModel()
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		if cmd == nil || cmd() != tea.Quit() {
+			t.Error("expected ctrl+c to quit during name input")
+		}
+	})
+
+	t.Run("esc still cancels back to session list", func(t *testing.T) {
+		m := newInputModel()
+		nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		if got := nm.(Model).state; got != StateSessionSelect {
+			t.Fatalf("expected esc to return to StateSessionSelect, got %v", got)
+		}
+	})
+
+	t.Run("q while list-filtering does not quit", func(t *testing.T) {
+		m := New(true)
+		m.width, m.height = 80, 24
+		m.SetSessions([]zmx.Session{{Name: "ccc.crawler.main", Project: "crawler", Suffix: "main"}}, "crawler")
+		m.state = StateSessionSelect
+		nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m = nm.(Model)
+		nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+		m = nm.(Model)
+		if cmd != nil && cmd() == tea.Quit() {
+			t.Fatal("typing 'q' in the list filter quit the TUI")
+		}
+		if m.state != StateSessionSelect {
+			t.Fatalf("expected to stay in StateSessionSelect, got %v", m.state)
+		}
+	})
+}
